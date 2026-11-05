@@ -266,8 +266,8 @@ const AP_Param::GroupInfo AP_MotorsUGV::var_info[] = {
     AP_GROUPINFO("LOIT_I_DISAG", 35, AP_MotorsUGV, _loit_i_disagree, 0.5f),
 
     // @Param: LOIT_ROT_ANG
-    // @DisplayName: Loiter drift method-1 rotation angle gate
-    // @Description: Vectored-thruster deflection (deg) above which coast drift sampling is blocked. Rotating the hull about its pivot point produces real lateral IMU velocity (v = yaw_rate * pivot_radius) that would be misread as drift.
+    // @DisplayName: DEPRICATED Loit drift metod1 rot ang gate
+    // @Description: deprecated: rotation gate uses yaw rate only Vectored-thruster deflection (deg) above which coast drift sampling is blocked. Rotating the hull about its pivot point produces real lateral IMU velocity (v = yaw_rate * pivot_radius) that would be misread as drift.
     // @Units: deg
     // @Range: 1 90
     // @User: Advanced
@@ -279,7 +279,7 @@ const AP_Param::GroupInfo AP_MotorsUGV::var_info[] = {
     // @Units: deg/s
     // @Range: 1 90
     // @User: Advanced
-    AP_GROUPINFO("LOIT_ROT_RAT", 37, AP_MotorsUGV, _loit_rot_rate_dps, 20.0f),
+    AP_GROUPINFO("LOIT_ROT_RAT", 37, AP_MotorsUGV, _loit_rot_rate_dps, 10.0f),
 
     // @Param: DRIFT_EST_YR
     // @DisplayName: Nav drift estimator yaw rate gate
@@ -559,7 +559,14 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // response - worst-case angle quantization error is 2deg, and it is
         // the only protection here when VEC_RESID_TC=0 (no input filtering)
         const float fold_eps_rad = radians(2.0f);
-        if (_vec_folded) {
+        // fold (reverse thrust) allowed only for genuine aft demand.
+        // |fx_filt| < 0.03 covers pivot AND idle: no surge demand means
+        // nothing to fold for — prevents latch from braking residue or
+        // persistent small offsets near zero. same threshold as rot-brake.
+        const bool aft_demand = _vec_throttle_filt < -0.03f;
+        if (!aft_demand) {
+            _vec_folded = false;
+        } else if (_vec_folded) {
             // unfold test on the RAW delta: demand must return inside
             // +/-88deg (forward hemisphere) before we stop folding
             if (fabsf(delta) < M_PI_2 - fold_eps_rad) {
@@ -686,19 +693,33 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             throttle_norm *= brk_asym;
         }
 
-        // rotation brake (angle-locked): when the hull is overshooting a
-        // commanded rotation (or rotating undemanded), LOCK steering_angle_rad
-        // on the rotation side and apply reverse thrust - the servo never
-        // transits, so there is no 180deg sweep under load. brake magnitude
-        // scales with |yaw|/YAW_CRS_RATE (see brake_frac below). MOT_VEC_BRK
-        // scales magnitude (0 = brake off). Manual never reaches this code.
+        // pivot coast arm: surge demand ~0 (pivot domain, same 0.03
+        // threshold as the brake entry below) AND the servo was at a
+        // stop AND the command is heading to the opposite side:
+        //  (a) flipped: the commanded angle changed sign - at fx~0 the
+        //      command stays saturated through the n_filt sweep and
+        //      jumps stop->stop in one tick, so this is the dominant
+        //      arm path; or
+        //  (b) off_stop && demand_opposite: the command left the stop
+        //      inward while the demand already points to the other
+        //      side - covers non-saturated commands (higher fx, blend
+        //      zone) where the angle sweeps through center instead of
+        //      jumping.
+        // a departure from the stop WITHOUT opposite-side demand
+        // (release decay, pivot->surge ramp) does NOT arm.
+        // one-shot edge, no re-arm: the old level-based re-arm
+        // (sign(n)!=sign(last_angle)) stayed true forever whenever
+        // anything held the servo off-side (fold latch), re-arming
+        // coast every tick and holding throttle at 0 for 20-70s.
+        const bool was_at_stop = fabsf(_vec_last_steering_angle_rad) >= vector_angle_max_rad - 1e-4f;
+        const bool off_stop    = fabsf(steering_angle_rad) < vector_angle_max_rad - 1e-4f;
+        const bool demand_opposite = is_positive(n) != is_positive(_vec_last_steering_angle_rad);
+        const bool flipped = is_positive(steering_angle_rad) != is_positive(_vec_last_steering_angle_rad);
         if (!_vec_rot_brake_active &&
             vec_mag >= _vec_deadband &&
             fabsf(n) > 0.05f &&
             fabsf(fx) <= 0.03f &&
-            ((fabsf(_vec_last_steering_angle_rad) >= vector_angle_max_rad - 1e-4f &&
-              is_positive(n) != is_positive(_vec_last_steering_angle_rad)) ||
-             (_vec_pivot_coast_ms != 0 && is_positive(n) != is_positive(_vec_last_steering_angle_rad)))) {
+            was_at_stop && (flipped || (off_stop && demand_opposite))) {
             _vec_pivot_coast_ms = AP_HAL::millis();
         }
 
