@@ -106,22 +106,14 @@ void ModeLoiter::update()
         }
         _drift_last_distance = _distance_to_destination;
 
-        // gate on the pre-floor PID demand, not the motor output: the
-        // steering-to-throttle floor can hold real thrust while the PID is
-        // requesting zero, which would falsely disqualify a true coast
-        // rotation gate: a deflected vectored thruster rotates the hull about
-        // its pivot (~0.6m radius at 90deg), producing lateral IMU velocity
-        // r*L_pivot (up to ~0.5m/s at 45deg/s) that is NOT drift. the single
-        // bow thruster can never translate the hull sideways, so any measured
-        // lateral velocity while NOT rotating is pure drift. block sampling
-        // during rotation - detected by thruster deflection (cause) and yaw
-        // rate (effect), both direct measurements, no estimation.
-        const float vec_angle_deg = fabsf(degrees(g2.motors.get_vectored_angle_rad()));
         const float yaw_rate_degs = fabsf(degrees(ahrs.get_yaw_rate_earth()));
-        const float rot_ang_deg = g2.motors.get_loit_rot_ang_deg();
+        // rotation gate on yaw rate only: thruster deflection alone does not
+        // contaminate the drift sample -- only actual hull rotation produces
+        // the false lateral velocity (IMU orbits the pivot point). a deflected
+        // thruster with ~0 thrust (residual pivot oscillation) must not block
+        // sampling.
         const float rot_rate_dps = g2.motors.get_loit_rot_rate_dps();
-        const bool rotating = (rot_ang_deg > 0.0f && vec_angle_deg > rot_ang_deg) ||
-                              (rot_rate_dps > 0.0f && yaw_rate_degs > rot_rate_dps);
+        const bool rotating = (rot_rate_dps > 0.0f && yaw_rate_degs > rot_rate_dps);
         // declared here (not at :154) so method-1 can gate on it too: a coast
         // sample taken while the thruster is traversing +-90deg is not drift -
         // throttle is force-zeroed and the hull slides on inertia, not current
