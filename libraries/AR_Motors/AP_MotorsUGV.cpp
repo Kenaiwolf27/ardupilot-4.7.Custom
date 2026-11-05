@@ -526,7 +526,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // S-shaped ramp (same sin^2 shape as the pivot blend below), not
         // linear: flatter near both ends, steeper mid-transition, so the
         // filter strength doesn't kink at the VEC_BLND_THR boundary
-        const float tc_ratio = constrain_float(fabsf(fx) / _vec_blend_thr, 0.0f, 1.0f);
+        const float tc_ratio = constrain_float(_vec_throttle_filt / _vec_blend_thr, 0.0f, 1.0f);
         const float tc_scale = sq(cosf(tc_ratio * M_PI_2));    // smooth S-shape: slope=0 at both ends, no kink
         resid_tc_scaled *= tc_scale;
     }
@@ -560,10 +560,10 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // the only protection here when VEC_RESID_TC=0 (no input filtering)
         const float fold_eps_rad = radians(2.0f);
         // fold (reverse thrust) allowed only for genuine aft demand.
-        // |fx_filt| < 0.03 covers pivot AND idle: no surge demand means
+        // fx_filt < -0.05 covers pivot AND idle: no surge demand means
         // nothing to fold for — prevents latch from braking residue or
         // persistent small offsets near zero. same threshold as rot-brake.
-        const bool aft_demand = _vec_throttle_filt < -0.03f;
+        const bool aft_demand = _vec_throttle_filt < -0.05f;
         if (!aft_demand) {
             _vec_folded = false;
         } else if (_vec_folded) {
@@ -693,34 +693,37 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             throttle_norm *= brk_asym;
         }
 
-        // pivot coast arm: surge demand ~0 (pivot domain, same 0.03
-        // threshold as the brake entry below) AND the servo was at a
-        // stop AND the command is heading to the opposite side:
-        //  (a) flipped: the commanded angle changed sign - at fx~0 the
-        //      command stays saturated through the n_filt sweep and
-        //      jumps stop->stop in one tick, so this is the dominant
-        //      arm path; or
-        //  (b) off_stop && demand_opposite: the command left the stop
-        //      inward while the demand already points to the other
-        //      side - covers non-saturated commands (higher fx, blend
-        //      zone) where the angle sweeps through center instead of
-        //      jumping.
-        // a departure from the stop WITHOUT opposite-side demand
-        // (release decay, pivot->surge ramp) does NOT arm.
-        // one-shot edge, no re-arm: the old level-based re-arm
-        // (sign(n)!=sign(last_angle)) stayed true forever whenever
-        // anything held the servo off-side (fold latch), re-arming
-        // coast every tick and holding throttle at 0 for 20-70s.
-        const bool was_at_stop = fabsf(_vec_last_steering_angle_rad) >= vector_angle_max_rad - 1e-4f;
-        const bool off_stop    = fabsf(steering_angle_rad) < vector_angle_max_rad - 1e-4f;
-        const bool demand_opposite = is_positive(n) != is_positive(_vec_last_steering_angle_rad);
-        const bool flipped = is_positive(steering_angle_rad) != is_positive(_vec_last_steering_angle_rad);
-        if (!_vec_rot_brake_active &&
-            vec_mag >= _vec_deadband &&
+        // pivot coast arm: pivot is defined by the ALLOCATOR OUTPUT -  
+        // the commanded angle at saturation (~+-90deg), not by any  
+        // throttle band. fx=0.02 with n->0 is NOT a pivot (servo near  
+        // center); fx=0.02 with full n IS (servo pinned at the stop).  
+        // arm requires the servo was at a stop AND the command is  
+        // heading to the opposite side:  
+        //  (a) flipped: the commanded angle changed sign - at fx~0 the  
+        //      command stays saturated through the n_filt sweep and  
+        //      jumps stop->stop in one tick, so this is the dominant  
+        //      arm path; or  
+        //  (b) off_stop && demand_opposite: the command left the stop  
+        //      inward while the demand already points to the other  
+        //      side - covers non-saturated commands (higher fx, blend  
+        //      zone) where the angle sweeps through center instead of  
+        //      jumping.  
+        // a departure from the stop WITHOUT opposite-side demand  
+        // (release decay, pivot->surge ramp) does NOT arm.  
+        // one-shot edge, no re-arm: the old level-based re-arm  
+        // (sign(n)!=sign(last_angle)) stayed true forever whenever  
+        // anything held the servo off-side (fold latch), re-arming  
+        // coast every tick and holding throttle at 0 for 20-70s.  
+        const bool was_at_stop = fabsf(_vec_last_steering_angle_rad) >= vector_angle_max_rad - 1e-4f;  
+        const bool off_stop    = fabsf(steering_angle_rad) < vector_angle_max_rad - 1e-4f;  
+        const bool demand_opposite = is_positive(n) != is_positive(_vec_last_steering_angle_rad);  
+        const bool flipped = is_positive(steering_angle_rad) != is_positive(_vec_last_steering_angle_rad);  
+        if (!_vec_rot_brake_active &&  
+            vec_mag >= _vec_deadband &&  
             fabsf(n) > 0.05f &&
-            fabsf(fx) <= 0.03f &&
-            was_at_stop && (flipped || (off_stop && demand_opposite))) {
-            _vec_pivot_coast_ms = AP_HAL::millis();
+            _vec_throttle_filt <= 0.03f && 			
+            was_at_stop && (flipped || (off_stop && demand_opposite))) {  
+            _vec_pivot_coast_ms = AP_HAL::millis();  
         }
 
         // brake latch condition: yaw rate measurably OPPOSES n. the old
@@ -778,7 +781,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             (fabsf(yaw_rate_rads) > fabsf(des_rate_rads) + radians(3.0f));
         const bool rot_brake_cond =
             fabsf(yaw_rate_rads) > radians(5.0f) &&
-            ((des_idle && fabsf(fx) <= 0.03f) ||
+            ((des_idle && _vec_throttle_filt <= 0.03f && _vec_throttle_filt > -0.05f) ||
              (vec_mag >= _vec_deadband &&
               fabsf(steering_angle_rad) >= vector_angle_max_rad - 1e-4f &&
               yaw_overspeeds_des));
@@ -812,7 +815,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             // overshoot. yaw_rate_rads is the authoritative side indicator
             _vec_rot_brake_angle_rad = copysignf(vector_angle_max_rad, yaw_rate_rads);
         } else if (_vec_rot_brake_active &&
-                   (fabsf(yaw_rate_rads) <= radians(3.0f) || fabsf(fx) > 0.03f ||
+                   (fabsf(yaw_rate_rads) <= radians(3.0f) || _vec_throttle_filt > 0.03f || _vec_throttle_filt <= -0.05f ||
                     (des_active && !yaw_opposes_des && !yaw_overspeeds_des))) {
             // release on ANY of: (a) the overshoot the brake was fighting has
             // actually collapsed - |yaw_rate| back under 3deg/s, below the
@@ -844,7 +847,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             // for the whole VEC_TRN_MS. window length is VEC_TRN_MS; a
             // side-flip from saturation can also arm it via the side-flip
             // trigger above (fires on sign(n) vs last steering angle).
-            if (fabsf(fx) <= 0.03f &&
+            if (_vec_throttle_filt <= 0.03f && _vec_throttle_filt > -0.05f &&  
                 is_positive(n) != is_positive(_vec_rot_brake_angle_rad)) {
                 _vec_pivot_coast_ms = AP_HAL::millis();
             }
@@ -883,7 +886,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // at zero. cleared early only by a real fx demand (pivot over) or a
         // same-side re-lock (handled in the trigger branch above)
         if (_vec_pivot_coast_ms != 0) {
-            if (fabsf(fx) > 0.03f ||
+            if (_vec_throttle_filt > 0.03f ||
                 _vec_transit_ms <= 0 ||
                 (AP_HAL::millis() - _vec_pivot_coast_ms) >= (uint32_t)_vec_transit_ms.get()) {
                 _vec_pivot_coast_ms = 0;
