@@ -526,7 +526,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // S-shaped ramp (same sin^2 shape as the pivot blend below), not
         // linear: flatter near both ends, steeper mid-transition, so the
         // filter strength doesn't kink at the VEC_BLND_THR boundary
-        const float tc_ratio = constrain_float(_vec_throttle_filt / _vec_blend_thr, 0.0f, 1.0f);
+        const float tc_ratio = constrain_float(fabsf(_vec_throttle_filt) / _vec_blend_thr, 0.0f, 1.0f);
         const float tc_scale = sq(cosf(tc_ratio * M_PI_2));    // smooth S-shape: slope=0 at both ends, no kink
         resid_tc_scaled *= tc_scale;
     }
@@ -693,37 +693,37 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             throttle_norm *= brk_asym;
         }
 
-        // pivot coast arm: pivot is defined by the ALLOCATOR OUTPUT -  
-        // the commanded angle at saturation (~+-90deg), not by any  
-        // throttle band. fx=0.02 with n->0 is NOT a pivot (servo near  
-        // center); fx=0.02 with full n IS (servo pinned at the stop).  
-        // arm requires the servo was at a stop AND the command is  
-        // heading to the opposite side:  
-        //  (a) flipped: the commanded angle changed sign - at fx~0 the  
-        //      command stays saturated through the n_filt sweep and  
-        //      jumps stop->stop in one tick, so this is the dominant  
-        //      arm path; or  
-        //  (b) off_stop && demand_opposite: the command left the stop  
-        //      inward while the demand already points to the other  
-        //      side - covers non-saturated commands (higher fx, blend  
-        //      zone) where the angle sweeps through center instead of  
-        //      jumping.  
-        // a departure from the stop WITHOUT opposite-side demand  
-        // (release decay, pivot->surge ramp) does NOT arm.  
-        // one-shot edge, no re-arm: the old level-based re-arm  
-        // (sign(n)!=sign(last_angle)) stayed true forever whenever  
-        // anything held the servo off-side (fold latch), re-arming  
-        // coast every tick and holding throttle at 0 for 20-70s.  
-        const bool was_at_stop = fabsf(_vec_last_steering_angle_rad) >= vector_angle_max_rad - 1e-4f;  
-        const bool off_stop    = fabsf(steering_angle_rad) < vector_angle_max_rad - 1e-4f;  
-        const bool demand_opposite = is_positive(n) != is_positive(_vec_last_steering_angle_rad);  
-        const bool flipped = is_positive(steering_angle_rad) != is_positive(_vec_last_steering_angle_rad);  
-        if (!_vec_rot_brake_active &&  
-            vec_mag >= _vec_deadband &&  
+        // pivot coast arm: pivot is defined by the ALLOCATOR OUTPUT -
+        // the commanded angle at saturation (~+-90deg), not by any
+        // throttle band. fx=0.02 with n->0 is NOT a pivot (servo near
+        // center); fx=0.02 with full n IS (servo pinned at the stop).
+        // arm requires the servo was at a stop AND the command is
+        // heading to the opposite side:
+        //  (a) flipped: the commanded angle changed sign - at fx~0 the
+        //      command stays saturated through the n_filt sweep and
+        //      jumps stop->stop in one tick, so this is the dominant
+        //      arm path; or
+        //  (b) off_stop && demand_opposite: the command left the stop
+        //      inward while the demand already points to the other
+        //      side - covers non-saturated commands (higher fx, blend
+        //      zone) where the angle sweeps through center instead of
+        //      jumping.
+        // a departure from the stop WITHOUT opposite-side demand
+        // (release decay, pivot->surge ramp) does NOT arm.
+        // one-shot edge, no re-arm: the old level-based re-arm
+        // (sign(n)!=sign(last_angle)) stayed true forever whenever
+        // anything held the servo off-side (fold latch), re-arming
+        // coast every tick and holding throttle at 0 for 20-70s.
+        const bool was_at_stop = fabsf(_vec_last_steering_angle_rad) >= vector_angle_max_rad - 1e-4f;
+        const bool off_stop    = fabsf(steering_angle_rad) < vector_angle_max_rad - 1e-4f;
+        const bool demand_opposite = is_positive(n) != is_positive(_vec_last_steering_angle_rad);
+        const bool flipped = is_positive(steering_angle_rad) != is_positive(_vec_last_steering_angle_rad);
+        if (!_vec_rot_brake_active &&
+            vec_mag >= _vec_deadband &&
             fabsf(n) > 0.05f &&
-            _vec_throttle_filt <= 0.03f && 			
-            was_at_stop && (flipped || (off_stop && demand_opposite))) {  
-            _vec_pivot_coast_ms = AP_HAL::millis();  
+            (_vec_throttle_filt <= 0.03f && _vec_throttle_filt > -0.05f) &&
+            was_at_stop && (flipped || (off_stop && demand_opposite))) {
+            _vec_pivot_coast_ms = AP_HAL::millis();
         }
 
         // brake latch condition: yaw rate measurably OPPOSES n. the old
@@ -847,7 +847,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             // for the whole VEC_TRN_MS. window length is VEC_TRN_MS; a
             // side-flip from saturation can also arm it via the side-flip
             // trigger above (fires on sign(n) vs last steering angle).
-            if (_vec_throttle_filt <= 0.03f && _vec_throttle_filt > -0.05f &&  
+            if (_vec_throttle_filt <= 0.03f && _vec_throttle_filt > -0.05f &&
                 is_positive(n) != is_positive(_vec_rot_brake_angle_rad)) {
                 _vec_pivot_coast_ms = AP_HAL::millis();
             }
@@ -886,7 +886,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // at zero. cleared early only by a real fx demand (pivot over) or a
         // same-side re-lock (handled in the trigger branch above)
         if (_vec_pivot_coast_ms != 0) {
-            if (_vec_throttle_filt > 0.03f ||
+            if (_vec_throttle_filt > 0.03f || _vec_throttle_filt <= -0.05f ||
                 _vec_transit_ms <= 0 ||
                 (AP_HAL::millis() - _vec_pivot_coast_ms) >= (uint32_t)_vec_transit_ms.get()) {
                 _vec_pivot_coast_ms = 0;
