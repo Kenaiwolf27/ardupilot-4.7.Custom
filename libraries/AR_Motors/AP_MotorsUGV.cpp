@@ -586,28 +586,21 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // blend toward a direct angle proportional to steering demand only,
         // same VEC_BLND_THR threshold/mechanism as the legacy blend, now
         // applied inside the Fossen allocator instead of being unavailable
-        float direct_angle_rad = constrain_float(_vec_steering_filt, -1.0f, 1.0f) * vector_angle_max_rad;
-        // single flip authority: both w_lowthr blend inputs must follow the
-        // FOLD decision, not fx_filt<0. previously direct flipped the moment
-        // filtered throttle went negative while atan folded only past
-        // |delta|>92deg (hysteresis back at 88deg) - in those two desync
-        // windows the blend mixed +90 with -90 and swept steering_angle_rad
-        // through zero, producing meaningless sign and cancelling thrust.
-        // _vec_folded is already latched (no chatter) and is the same state
-        // the atan side and the t_pivot pair-sign below key off.
-        if (_vec_folded) {
-            direct_angle_rad = -direct_angle_rad;
+        // pure atan2 allocation: at fx~0 any nonzero n commands +-90deg
+        // (pivot), at speed the angle follows atan2(n,fx) (normal steering).
+        // the n-deadband below is the only anti-jitter layer - it gates the
+        // demand, not the angle. hysteresis (enter 0.05 / exit 0.03) prevents
+        // servo exercise when n_filt hovers at the threshold: log analysis
+        // showed bursts of 0.049<->0.054 crossings at fx=0 (Loiter/Acro
+        // hunting) that would flip the servo 0<->90deg each crossing.
+        // sign flips of n still pass through - those are real demand flips
+        // handled by the pivot coast arm below.
+        if (fabsf(_vec_steering_filt) > 0.05f) {
+            _vec_steer_db_out = true;
+        } else if (fabsf(_vec_steering_filt) < 0.03f) {
+            _vec_steer_db_out = false;
         }
-        float w_lowthr;
-        if (is_positive(_vec_blend_thr)) {
-            // same sin^2 S-curve as the pivot blend (and the VEC_RESID_TC
-            // scaling above), replacing the previous linear ramp
-            const float lowthr_ratio = constrain_float(fabsf(_vec_throttle_filt) / _vec_blend_thr, 0.0f, 1.0f);
-            w_lowthr = sq(cosf(lowthr_ratio * M_PI_2));    // smooth S-shape, same family as the pivot blend
-        } else {
-            w_lowthr = 0.0f;
-        }
-        steering_angle_rad = w_lowthr * direct_angle_rad + (1.0f - w_lowthr) * atan_angle_rad;
+        steering_angle_rad = _vec_steer_db_out ? atan_angle_rad : 0.0f;
 
         // magnitude: fx/cos(delta) generalizes vec_mag to the case where the
         // angle clamp above actually engaged (VEC_ANGLEMAX<90): if delta was
@@ -694,9 +687,12 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         }
 
         // pivot coast arm: pivot is defined by the ALLOCATOR OUTPUT -
-        // the commanded angle at saturation (~+-90deg), not by any
-        // throttle band. fx=0.02 with n->0 is NOT a pivot (servo near
-        // center); fx=0.02 with full n IS (servo pinned at the stop).
+        // the commanded angle at saturation (~+-90deg) - AND by the
+        // surge band (-0.05,+0.03]: reverse demand below -0.05 is the
+        // fold domain, forward demand above +0.03 is normal driving;
+        // neither may arm a pivot coast. fx=0.02 with n->0 is NOT a
+        // pivot (servo near center); fx=0.02 with full n IS (servo
+        // pinned at the stop).
         // arm requires the servo was at a stop AND the command is
         // heading to the opposite side:
         //  (a) flipped: the commanded angle changed sign - at fx~0 the
@@ -748,7 +744,8 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // dead through the whole passive runout. three lanes:
         //   (a) yaw_opposes_des    - rotation opposite the demand
         //   (b) des_idle           - demand gone (incl. 500ms timeout) with
-        //                          pure-rotation state (fx<=0.03) while the
+        //                          pure-rotation state (fx_filt in the
+        //                          (-0.05,+0.03] pivot band) while the
         //                          hull still turns. vec_mag/angle gates are
         //                          deliberately bypassed: post-release n and
         //                          the servo leave the stop, so those gates
@@ -759,7 +756,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         //                          angles is pure deceleration, no moment.
         //   (c) yaw_overspeeds_des - measured rotation exceeds demand+3deg/s
         // two lanes: (a) des_idle - no rotation demand (incl. 500ms timeout),
-        //   |fx|<=0.03, hull still turning >5deg/s; vec_mag/angle gates
+        //   fx_filt in (-0.05,+0.03], hull still turning >5deg/s; vec_mag/angle gates
         //   deliberately bypassed since post-release the servo has left the
         //   stop. (b) yaw_overspeeds_des - measured |yaw| exceeds |des|+3deg/s
         //   in the demand direction; keeps deadband + at-stop gates.
@@ -823,11 +820,11 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             // at the entry line). this is deliberately independent of n/n's sign:
             // n can flip mid-lock (pilot/controller now also wants the
             // wrong-side rotation to continue) and that must NOT be read as
-            // "job done" - or (b) forward/aft demand (fx) has reappeared -
-            // pivot has ended, atan2(n,fx) no longer sits at/near the
-            // +-90deg envelope, so re-triggering the instant this clears is
-            // not possible. fx=0.03 is a wide margin: even at n=1 it already
-            // pulls delta to ~88 deg, well clear of the
+            // "job done" - or (b) surge demand (fx_filt) has left the pivot
+            // band - forward above +0.03 ends the pivot (atan2(n,fx) leaves
+            // the +-90deg envelope), reverse at/below -0.05 hands control to
+            // the fold domain. fx=0.03 is a wide margin: even at n=1 it
+            // already pulls delta to ~88 deg, well clear of the
             // vector_angle_max_rad-1e-4 trigger threshold. or (c) the demand
             // has reappeared and now AGREES with the rotation direction while
             // the hull is not running away - the pilot asked for this same
@@ -839,8 +836,9 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
                                      // pinned at the stop so cond keeps counting)
                                      // - each re-latch must re-earn its 3 ticks
             // start the servo-transit suppression window ONLY when the demand
-            // points to the opposite side of the locked angle with no forward
-            // demand - the servo is about to traverse +-90deg through center
+            // points to the opposite side of the locked angle with surge
+            // demand inside the pivot band (-0.05,+0.03] - the servo is
+            // about to traverse +-90deg through center
             // and any thrust during that sweep lands partly forward. a
             // same-side release needs NO transit (servo stays on the lock
             // side), so arming the window there would just mute pivot thrust
@@ -1536,6 +1534,7 @@ void AP_MotorsUGV::output_regular(bool armed, float ground_speed, float steering
         _vec_rot_brake_angle_rad    = 0.0f;   // locked angle má zmysel len počas brake
         _vec_rot_brake_cnt          = 0;      // debounce counter — 3-tick hysteresis by po re-arme mohla dostať head-start
         _vec_folded                 = false;  // fold hysteresis — bez resetu prvý tick po re-arme môže začať foldnutý
+        _vec_steer_db_out           = false;  // deadband latch — bez resetu prvý tick po re-arme môže začať mimo deadbandu
         _vec_throttle_filt          = 0.0f;
         _vec_steering_filt          = 0.0f;
     }
