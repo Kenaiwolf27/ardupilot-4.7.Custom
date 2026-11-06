@@ -149,8 +149,8 @@ const AP_Param::GroupInfo AP_MotorsUGV::var_info[] = {
     AP_GROUPINFO("VEC_DEADBAND", 17, AP_MotorsUGV, _vec_deadband, 0.02f),
 
     // @Param: VEC_BLND_THR
-    // @DisplayName: Vectored thrust blend throttle
-    // @Description: Filtered throttle below which the vectored angle blends from direct steering-proportional angle into full atan(); 0 = legacy atan() always
+    // @DisplayName: Vectored thrust filter ramp throttle
+    // @Description: Filtered throttle below which the residual throttle filter (VEC_RESID_TC) is applied at full strength; ramps to zero filtering above this threshold. Legacy name kept for EEPROM compatibility - the steering-angle blend it originally controlled was removed; steering angle is now pure atan2 with a 0.05/0.03 deadband latch
     // @Range: 0.0 1.0
     // @User: Advanced
     AP_GROUPINFO("VEC_BLND_THR", 18, AP_MotorsUGV, _vec_blend_thr, 0.15f),
@@ -580,12 +580,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         }
         const float atan_angle_rad = constrain_float(delta, -vector_angle_max_rad, vector_angle_max_rad);
 
-        // ported legacy atan-fix (formerly output_regular()-only, VEC_FOSSEN=0
-        // path): near zero throttle, atan2's angle is dominated by noise on
-        // the small steering/throttle ratio (hull roll/pitch, sensor noise).
-        // blend toward a direct angle proportional to steering demand only,
-        // same VEC_BLND_THR threshold/mechanism as the legacy blend, now
-        // applied inside the Fossen allocator instead of being unavailable
+        // steering angle: pure atan2 of the (possibly folded) demand vector
         // pure atan2 allocation: at fx~0 any nonzero n commands +-90deg
         // (pivot), at speed the angle follows atan2(n,fx) (normal steering).
         // the n-deadband below is the only anti-jitter layer - it gates the
