@@ -14,7 +14,7 @@ Three layered features on top of upstream Rover:
 
 1. **Current/wind drift estimation & compensation** — two independent estimators (nav-source while driving, loiter-source while holding position) feed crab-angle/speed corrections into Auto, Guided and Loiter, with per-source gains applied once at write-time (all stored estimates are post-gain), age-weighted seeding across mode switches, dual-window nav sampling (8 s fast + 20 s authoritative) with disagreement-streak escalation, and a kill-switch at gain=0.
 2. **Steering thrust floor + throttle management** — guarantees minimum thrust whenever a large heading correction is commanded, so a vectored thruster always has authority; plus cosine throttle reduction and speed-PID I-freeze during pivot turns.
-3. **Vectored-thrust angle blending** — blends direct and atan-based steering-angle computation based on filtered throttle, with hysteresis deadband.
+3. **Vectored-thrust Fossen allocator** — pure `atan2` demand-vector decomposition with fold hysteresis, a Schmitt-trigger steering deadband (enter 0.05 / exit 0.03), pivot-domain saturation detection, rotation brake and servo-transit coast.
 
 Supporting infrastructure: MAVLink named-float diagnostics, an `ATC_SPD_EXPO` nonlinear speed↔throttle curve, and a slim `extra_hwdef.dat` build.
 
@@ -22,22 +22,27 @@ Supporting infrastructure: MAVLink named-float diagnostics, an `ATC_SPD_EXPO` no
 
 ## 2. `libraries/AR_Motors/AP_MotorsUGV.cpp/.h`
 
-### 2.1 Vectored-thrust angle blending (`MOT_VEC_BLEND_THR`, `MOT_VEC_DEADBAND`, `MOT_VEC_RESID_TC`)
+### 2.1 Vectored-thrust angle computation (`MOT_VEC_DEADBAND`, `MOT_VEC_RESID_TC`, `MOT_VEC_BLEND_THR`)
 
-In the vectored-thrust output path, the commanded (steering, throttle) pair is converted to a thruster deflection angle `steering_angle_rad`. Two mappings exist:
-
-- **Direct mapping** — angle proportional to steering demand; best at low/zero throttle.
-- **Legacy `atan()` mapping** — `atan2(steer, throttle)`; best at cruise.
-
-The fork blends them with weight `w`:
+In the vectored-thrust output path, the commanded (steering, throttle) pair is converted to a thruster deflection angle `steering_angle_rad`. Since commit `3d41693a` the Fossen path uses a single mapping — pure `atan2` of the (possibly folded) demand vector:
 
 ```cpp
-w = 1.0f - constrain_float(fabsf(_vec_throttle_filt) / _vec_blend_thr, 0.0f, 1.0f);
-steering_angle_rad = w * direct_angle_rad + (1.0f - w) * atan_angle_rad;
-// AP_MotorsUGV.cpp ~1030-1038
+// hysteresis on the steering deadband: enter above 0.05, exit below 0.03.
+// plain deadband would chatter the servo 0<->+-90deg when n_filt hovers
+// at the threshold (seen in logs); the 0.05/0.03 split makes that
+// oscillation structurally impossible. sign flips of n still flip the
+// angle +-90deg - that is a real demand flip, handled by the coast arm
+// below.
+if (fabsf(_vec_steering_filt) > 0.05f) {
+    _vec_steer_db_out = true;
+} else if (fabsf(_vec_steering_filt) < 0.03f) {
+    _vec_steer_db_out = false;
+}
+steering_angle_rad = _vec_steer_db_out ? atan_angle_rad : 0.0f;
+// AP_MotorsUGV.cpp ~582-593
 ```
 
-`w=1` (near-zero throttle) → pure direct mapping; `w=0` (throttle ≥ blend threshold) → pure atan mapping. The same `w` blends the boost scaler:
+The previous `w_lowthr` blend toward a proportional direct angle (`n*90deg`) was removed: at `fx~0` it produced `~n*90deg` instead of saturation, so a small rotation demand never reached the pivot domain and the boat did not rotate. `MOT_VEC_BLEND_THR` no longer touches the angle — it only scales the residual-demand filter strength (sin² S-curve on `resid_tc_scaled`, full filtering below the threshold, none above). The boost scaler is unchanged:
 
 ```cpp
 const float throttle_scaler_inv = w + (1.0f - w) * cosf(steering_angle_rad);
@@ -49,7 +54,7 @@ if (!is_zero(throttle_scaler_inv)) {
 
 **Physics:** `throttle` is the commanded *forward* thrust component. The boost guarantees the commanded forward component `T·cos(θ) = throttle` is deliverable — `T = throttle/cos(θ)` — which simultaneously makes the lateral component `T·sin(θ) = throttle·tan(θ)` large enough to turn the boat at speed. Without it, the boat loses steering authority exactly when moving fast. The 1/cos spike near 90° is intentional (see §10).
 
-`MOT_VEC_DEADBAND` freezes `_vec_last_steering_angle_rad` when both steering and throttle demands are near zero — prevents servo hunting. The gate variable is `vec_mag` = magnitude of the filtered (steering, throttle) demand vector, i.e. *demand loudness*, not an angle error — the frozen value is simply whatever angle the allocator last output. In the Fossen path the same parameter has a **second, load-bearing role**: it is the `vec_mag >= VEC_DEADBAND` latch guard on the rotation-brake trigger and side-flip coast trigger (§11). With `VEC_BLND_THR > 0` the output-freeze part is largely redundant (the atan-blend already drives the angle toward ~0 at quiet demand), but setting `VEC_DEADBAND = 0` also removes the latch guards — a single noisy tick could then latch the brake on garbage `atan2` output. Keep it small, not zero. `_vec_resid_tc` sets the EMA time constant on `_vec_throttle_filt` so the blend weight doesn't chatter with throttle noise.
+`MOT_VEC_DEADBAND` freezes `_vec_last_steering_angle_rad` when both steering and throttle demands are near zero — prevents servo hunting. The gate variable is `vec_mag` = magnitude of the filtered (steering, throttle) demand vector, i.e. *demand loudness*, not an angle error — the frozen value is simply whatever angle the allocator last output. In the Fossen path the same parameter has a **second, load-bearing role**: it is the `vec_mag >= VEC_DEADBAND` latch guard on the rotation-brake trigger and side-flip coast trigger (§11). With the steering deadband latch (`_vec_steer_db_out`) the output-freeze part is largely redundant (the latch already drives the angle to 0 at quiet demand), but setting `VEC_DEADBAND = 0` also removes the latch guards — a single noisy tick could then latch the brake on garbage `atan2` output. Keep it small, not zero. `_vec_resid_tc` sets the EMA time constant on `_vec_throttle_filt` so the blend weight doesn't chatter with throttle noise.
 
 ### 2.2 Drift estimator state store
 
@@ -96,7 +101,7 @@ All new params live in `AP_MotorsUGV` under the `MOT_`/`LOIT_`/`DRIFT_`/`SFL_` p
 
 ### 2.5 Unified vectored-thrust allocator, Fossen-style (`VEC_FOSSEN`)
 
-Renamed from `VEC_ALLOC` to `VEC_FOSSEN` on 2026-10-11 (same param index 39) when the allocator's underlying math was reworked toward a Fossen-style formulation; re-verify behavior against this section rather than assuming old `VEC_ALLOC=1` behavior carried over unchanged. Requires `MOT_VEC_ANGLEMAX=90`. `vectored_allocate()` treats the (fx_req, n_req) demand — normalized surge force / yaw moment, both ±1 — as one thrust vector: direction picks the thruster angle (via atan2, folded into ±90° with sign-flip for reverse), magnitude/dominant-axis picks throttle. The demand is first low-pass filtered (`VEC_RESID_TC`, scaled down toward zero above `VEC_BLND_THR` via a sin²-S-curve) to suppress atan2 noise amplification near zero throttle. Below `VEC_BLND_THR` the raw atan2 angle is blended toward a direct steering-proportional angle (ported legacy "atan-fix"), same S-curve weight. Magnitude uses fx/cos(angle) (`VEC_COS_FLR` floors the cosine to avoid a division singularity near ±90°), blended via a second sin²-S-curve (between `VEC_BLD_STRT` and a derived end-angle = 90°−`VEC_COS_FLR`) toward a separate pivot-throttle term driven by `YAW_CRS_RATE`/`YAW_CRS_THR` (calibrated full-pivot throttle for a target yaw rate, shaped by `VEC_YAW_EXP`). `VEC_BRK_ASYM` scales up any counter-thrust (reverse is less efficient than forward for the same deceleration), applied both to linear surge braking and to rotation braking. Rotation braking is angle-locked (Option B): the instant measured yaw rate opposes the commanded direction at/near full deflection, the steering angle is LOCKED at its current value (immune to further atan2/blend changes) and reverse thrust proportional to |n| is applied via `VEC_BRK`; the lock releases only when the yaw-rate error crosses back to zero or real forward/aft demand (fx) reappears. Finally a deadband S-curve blend (`VEC_DEADBAND`) fades the whole computed output toward a frozen hold-state (last angle, zero throttle) at near-zero demand, deliberately bypassed while the rotation-brake lock is active so the blend can't fight the brake's own release condition.
+Renamed from `VEC_ALLOC` to `VEC_FOSSEN` on 2026-10-11 (same param index 39) when the allocator's underlying math was reworked toward a Fossen-style formulation; re-verify behavior against this section rather than assuming old `VEC_ALLOC=1` behavior carried over unchanged. Requires `MOT_VEC_ANGLEMAX=90`. `vectored_allocate()` treats the (fx_req, n_req) demand — normalized surge force / yaw moment, both ±1 — as one thrust vector: direction picks the thruster angle (via atan2, folded into ±90° with sign-flip for reverse), magnitude/dominant-axis picks throttle. The demand is first low-pass filtered (`VEC_RESID_TC`, scaled down toward zero above `VEC_BLND_THR` via a sin²-S-curve) to suppress atan2 noise amplification near zero throttle. The steering deadband latch (`_vec_steer_db_out`, enter 0.05 / exit 0.03) zeroes the angle below the demand threshold; above it the angle is pure `atan2`, so pivot is defined by allocator-output saturation (~90deg), not by a throttle band. Magnitude uses fx/cos(angle) (`VEC_COS_FLR` floors the cosine to avoid a division singularity near ±90°), blended via a second sin²-S-curve (between `VEC_BLD_STRT` and a derived end-angle = 90°−`VEC_COS_FLR`) toward a separate pivot-throttle term driven by `YAW_CRS_RATE`/`YAW_CRS_THR` (calibrated full-pivot throttle for a target yaw rate, shaped by `VEC_YAW_EXP`). `VEC_BRK_ASYM` scales up any counter-thrust (reverse is less efficient than forward for the same deceleration), applied both to linear surge braking and to rotation braking. Rotation braking is angle-locked (Option B): the instant measured yaw rate opposes the commanded direction at/near full deflection, the steering angle is LOCKED at its current value (immune to further atan2/blend changes) and reverse thrust proportional to |n| is applied via `VEC_BRK`; the lock releases only when the yaw-rate error crosses back to zero or real forward/aft demand (fx) reappears. Finally a deadband S-curve blend (`VEC_DEADBAND`) fades the whole computed output toward a frozen hold-state (last angle, zero throttle) at near-zero demand, deliberately bypassed while the rotation-brake lock is active so the blend can't fight the brake's own release condition.
 
 ```cpp
 void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_speed,
@@ -339,7 +344,7 @@ While inside the loiter circle, the controller watches `_throttle_nav_pct` (snap
 
 ```cpp
 const float yaw_rate_degs = fabsf(degrees(ahrs.get_yaw_rate_earth()));
-// gated by LOIT_ROT_ANG (15°) and LOIT_ROT_RATE (20°/s), 0 = gate off
+// gated by LOIT_ROT_RATE (20°/s) only since commit 34f52c5e — LOIT_ROT_ANG deprecated, 0 = gate off
 // rationale: a deflected bow thruster rotates the hull about its pivot point
 // (~0.6 m radius at 90°), generating lateral IMU velocity r·L_pivot up to
 // ~0.5 m/s that is NOT drift
@@ -450,9 +455,9 @@ Slim Rover build for a low-flash FC: ~470 feature `undef`s plus explicit `define
 
 | Param | Location | Default | Purpose |
 |---|---|---|---|
-| `MOT_VEC_BLEND_THR` | AP_MotorsUGV | 0.3 | throttle fraction where angle blend switches direct→atan |
-| `MOT_VEC_DEADBAND` | AP_MotorsUGV | 0.03 | steering deadband, freezes last angle |
-| `MOT_VEC_RESID_TC` | AP_MotorsUGV | 0.5 s | throttle filter TC for blend weight |
+| `MOT_VEC_BLEND_THR` | AP_MotorsUGV | 0.3 | throttle fraction below which the residual-demand filter is at full strength (sin² ramp); no longer affects the steering angle since `3d41693a` |
+| `MOT_VEC_DEADBAND` | AP_MotorsUGV | 0.03 | demand-vector magnitude floor (sin² fade + freeze of last angle); also the latch guard on brake/coast triggers |
+| `MOT_VEC_RESID_TC` | AP_MotorsUGV | 0.5 s | low-pass TC on filtered fx/n demands feeding the allocator |
 | `ATC_SPD_EXPO` | AR_AttitudeControl | 1.0 | speed↔throttle curve exponent (shared by FF, method-2, clamp) |
 | `ATC_ACC_VEQ` | AR_AttitudeControl | 0 (off) | equilibrium speed for linear accel curve `ACCEL_MAX·(1−v/VEQ)`; 0 = legacy constant `ACCEL_MAX` |
 | `ATC_DEC_V2` | AR_AttitudeControl | 0 (off) | quadratic coast-decel coefficient (`DEC_V2·v²`); 0 = legacy constant `DECEL_MAX` |
@@ -466,7 +471,7 @@ Slim Rover build for a low-flash FC: ~470 feature `undef`s plus explicit `define
 | `LOIT_COAST_THR` | AP_MotorsUGV | 1 % | coast gate (method 1) |
 | `LOIT_I_EQERR` | AP_MotorsUGV | 0.10 | **deprecated** — registered but unread; method-2 gate is stationary/sliding, not error-based |
 | `LOIT_I_MIN`/`I_ALPHA`/`I_DISAG` | AP_MotorsUGV | 0.02/0.10/0.5 | method-2 noise floor, EMA, disagreement |
-| `LOIT_ROT_ANG`/`LOIT_ROT_RATE` | AP_MotorsUGV | 15°/20 °/s | rotation gate (method 1); 0 = off |
+| `LOIT_ROT_RATE` | AP_MotorsUGV | 20 °/s | rotation gate (method 1); 0 = off. `LOIT_ROT_ANG` deprecated — registered but unread since `34f52c5e` (gate is yaw-rate only) |
 | `VEC_FOSSEN` | AP_MotorsUGV | 0 | renamed from `VEC_ALLOC` 2026-10-11 (same index 39); 0=stock blend + legacy SFL floor/cosine reduction stay active; 1=Fossen-style unified allocator (`vectored_allocate()`), mutually exclusive with SFL floor/cosine reduction (auto-disabled to avoid double compensation). Requires `MOT_VEC_ANGLEMAX=90` |
 | `SFL_PIVOT` | AP_MotorsUGV | 0.0 % | minimum floor throttle while heading error exceeds `SFL_IFRZ`; 0 disables. Semantic note: intended as full-throttle pivot capability, not scaled off `SFL_MAX` — see §11 open design question |
 | `VEC_BRK` | AP_MotorsUGV | 100 % | rotation-brake reverse thrust scale; 100 = nominal (brake magnitude = |n| x this scale, further multiplied by `VEC_BRK_ASYM`), 0 disables the brake; only active when servo at full deflection and PID demands opposite rotation |
@@ -503,11 +508,15 @@ This section documents decisions made during the vectored-thrust allocator rewor
 | `VEC_DEADBAND` hard switch | replaced by sin² S-curve blend `w_db` — full normal path always computes, output blends between frozen hold-state and computed values across the deadband edge; `w_db` forced to 1 while rotation-brake lock is active — commit `bbc508af` + gate commit |
 | `stop_vehicle` flag bypass | reverted to upstream master — `stop_vehicle()` again calls `Mode::set_steering()`, restoring stick-mixing during controlled stops. The entire `nav_mode`/`_pid_steering` flag layer was removed: allocator physics (rot-brake, brk_asym, coast) now runs unconditionally wherever the allocator runs; the loiter-runaway fix (`a85bd733`, int16 overflow clamp) is unaffected |
 | SFL/steering-floor duplication | SFL gated to legacy path only — `use_vec_fossen()` must be false for the floor to apply (`mode.cpp:429`); allocator covers pivot authority via `t_pivot`, SFL was a pre-allocator patch, not a foundation — commits `41a022a2`, `c36969ff` (param name fix `use_vec_alloc` → `use_vec_fossen`) |
-| Pivot-to-pivot transit (coast) | `throttle_norm = 0` for `VEC_TRN_MS` (default 800 ms), started by a yaw-agreement lock release OR a demanded-side flip from saturation (|n|>0.05, |fx|<=0.03, sign flip vs `_vec_last_steering_angle_rad`, not while brake-locked) — covers full servo transit so no thrust lands through intermediate angles; the window restarts on any additional side flip inside it (return transit needs the same time); early exit on `\|fx\| > 0.03`; re-lock on SAME side cancels instantly; opposite-side re-lock does NOT shorten the window — commit `72a193b4` + param + flip-trigger update |
+| Pivot-to-pivot transit (coast) | `throttle_norm = 0` for `VEC_TRN_MS` (default 800 ms), started by a yaw-agreement lock release OR a demanded-side flip from saturation (|n|>0.05, fx_filt <= 0.03 && fx_filt > -0.05, sign flip vs `_vec_last_steering_angle_rad`, not while brake-locked) — covers full servo transit so no thrust lands through intermediate angles; the window restarts on any additional side flip inside it (return transit needs the same time); early exit on `\|fx\| > 0.03`; re-lock on SAME side cancels instantly; opposite-side re-lock does NOT shorten the window — commit `72a193b4` + param + flip-trigger update |
 | `ATC_TURN_MAX_G` speed→turn-rate ceiling was wrong-shaped for a vectored-thrust hull | replaced for the `get_steering_out_rate()` call site only — new `AR_AttitudeControl::get_turn_rate_max_for_speed(speed)` returns a fitted logistic curve (`radians(20 / (1 + expf(6.70*(speed-1.44))))`), derived from on-water sustained-full-turn log data binned by heading-projected forward speed (~20°/s flat at low speed, decaying smoothly through the 0.9-1.5 m/s range). `get_turn_rate_from_lat_accel()`/`get_turn_lat_accel_max()`/`ATC_TURN_MAX_G` are untouched and remain active at their other call sites (`ModeCircle`, `AR_WPNav`) — commit `c194e817` |
 | S-curve WP nav could demand a turn rate (via `AR_PosControl`) the hull physically cannot sustain at cruise speed, because a wheeled-rover "minimum turn speed for the corner" floor was being applied | `turn_speed_min` floor (`safe_sqrt(get_turn_lat_accel_max()*0.5*_turn_radius)`) removed from `AR_PosControl::update()` — `_desired_speed` now always equals the commanded forward/back velocity target unmodified; `_turn_radius` becomes an unused private member after this change — commit `480b7925` |
 | Loiter (`LOIT_TYPE=1`) speed-vs-yaw-error floor assumed a reverse-toward-destination branch this config never takes | `yaw_error_ratio` in `ModeLoiter::update()` changed from a 180°-ramp with a 50% floor to a linear ramp to **zero at 90°** — beyond 90° heading error any forward component only moves the vehicle away from the target, and `LOIT_TYPE=1` skips the reverse branch (lines 369-373) that would otherwise justify retaining speed past 90° — commit `c3d2f698` |
-| Fold-boundary chatter | hysteresis implemented — `fold-in` at `\|delta\| > 90°+2°`, `fold-out` at `\|delta\| < 90°-2°`, single `_vec_folded` bool; protects `VEC_RESID_TC`=0 or very small TC — commit `dfa31ace` |
+| Fold-boundary chatter | hysteresis implemented — fold-in at \|delta\| > 90°+2°, fold-out at \|delta\| < 90°-2°, single _vec_folded bool; protects VEC_RESID_TC=0 or very small TC — commit dfa31ace |
+| Fold gate threshold | aft_demand raised -0.03 → -0.05 on _vec_throttle_filt — the old threshold let the fold latch persist through the fx_filt ∈ (-0.05, -0.03) band and block genuine reverse demand — commit 012dcf6f |
+| Pivot-domain gates unified on fx_filt | coast arm, brake lane (b) and brake/coast release all use the same band fx_filt <= 0.03 && fx_filt > -0.05 (release: fx_filt > 0.03 \|\| fx_filt <= -0.05) — pivot domain is defined by allocator-output saturation (servo at stop), not a throttle band; removes the fx/fx_filt desync between brake and fold gates — commits 1ed7a2b, b99c71c |
+| Angle blend removed | w_lowthr/direct_angle blend replaced by pure atan2 + _vec_steer_db_out Schmitt latch (enter 0.05 / exit 0.03, reset in disarm block). Fixes the real bug: at fx~0 a small n gave ~n*90deg and the boat did not rotate; pivot is now reachable for any \|n\| > 0.05 at low throttle — commit 3d41693a |
+| Drift rotation gate | method-1 sampling gated by yaw rate only (LOIT_ROT_RATE); LOIT_ROT_ANG deprecated — commit 34f52c5e |
 | Method-2 estimator blind spot | error gate removed — replaced by stationary (`\|v\| ≤ stop_speed`) / sliding (`\|v\| ≤ 2·stop_speed`, distance rising `LOITER_DRIFT_RISING_TICKS` ticks) windows + `!rotating` + `!in_transit` gates; sliding with no measurable direction skips the write instead of thrust-vector fallback (would give the opposite direction); zero-branch gated by `!sliding` so low-I sliding doesn't corrode the estimate; `LOIT_I_EQERR` deprecated |
 | `VEC_BRK` `@Description` comment | corrected — current code uses `\|n\| * VEC_BRK * VEC_BRK_ASYM`; old `\|yaw rate\|/16deg/s + 0.8` formula no longer exists |
 | Speed-PID I-freeze hold-vs-decay | reviewed — current hold-or-decay is **correct**, see §4.4 |
