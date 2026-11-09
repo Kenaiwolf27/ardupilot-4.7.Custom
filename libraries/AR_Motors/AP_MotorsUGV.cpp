@@ -717,36 +717,36 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             _vec_pivot_coast_ms = AP_HAL::millis();
         }
 
-        // rotation brake: single lane, keyed on the DEMAND (des_rate).  
-        // latches when the measured yaw rate overspeeds the demanded rate  
-        // by >3deg/s IN the demanded direction, while the servo is at a  
-        // stop and |yaw| > 5deg/s, for 3 consecutive ticks (~60ms at 50Hz).  
-        // rotation OPPOSED to the demand never enters: normal allocation  
-        // already counters it (and the counter-moment serves the demand).  
-        // post-release runout (des==0, hull still turning) is NOT a brake  
-        // case either - with des==0 the rate controller's P-term drives n  
-        // against the rotation and normal allocation damps it; the old  
-        // des_idle lane was removed (it latched on wind drift, exercised  
-        // the servo stop-to-stop, and its justification - an 8s I-term  
-        // runout holding n on the rotation side - was not confirmed by  
-        // PIDS logs: I stays ~0, the same-side n during the release ramp  
+        // rotation brake: single lane, keyed on the DEMAND (des_rate).
+        // latches when the measured yaw rate overspeeds the demanded rate
+        // by >3deg/s IN the demanded direction, while the servo is at a
+        // stop and |yaw| > 5deg/s, for 3 consecutive ticks (~60ms at 50Hz).
+        // rotation OPPOSED to the demand never enters: normal allocation
+        // already counters it (and the counter-moment serves the demand).
+        // post-release runout (des==0, hull still turning) is NOT a brake
+        // case either - with des==0 the rate controller's P-term drives n
+        // against the rotation and normal allocation damps it; the old
+        // des_idle lane was removed (it latched on wind drift, exercised
+        // the servo stop-to-stop, and its justification - an 8s I-term
+        // runout holding n on the rotation side - was not confirmed by
+        // PIDS logs: I stays ~0, the same-side n during the release ramp
         // is FF tracking the still-positive target).
         const bool des_active        = fabsf(des_rate_dps) > 0.5f;
         const bool yaw_opposes_des   = des_active &&
             (is_positive(yaw_rate_rads) != is_positive(des_rate_rads));
-        // runaway condition: rotation overspeeding IN the demanded direction.  
-        // !yaw_opposes_des is mandatory, not redundant: |yaw|>|des|+3 alone  
-        // also matches rotation opposed to the demand (drift, small-demand  
-        // flip) - latching there forces a 180deg servo transit under  
-        // reverse thrust, the exact regime the brake exists to prevent.  
-        // opposed rotation is handled by normal allocation (its counter-  
+        // runaway condition: rotation overspeeding IN the demanded direction.
+        // !yaw_opposes_des is mandatory, not redundant: |yaw|>|des|+3 alone
+        // also matches rotation opposed to the demand (drift, small-demand
+        // flip) - latching there forces a 180deg servo transit under
+        // reverse thrust, the exact regime the brake exists to prevent.
+        // opposed rotation is handled by normal allocation (its counter-
         // moment then serves the demand too), or by coast-gated transit.
-        const bool yaw_overspeeds_des = des_active && !yaw_opposes_des &&  
-            (fabsf(yaw_rate_rads) > fabsf(des_rate_rads) + radians(3.0f));  
-        const bool rot_brake_cond =  
-            fabsf(yaw_rate_rads) > radians(5.0f) &&  
-            vec_mag >= _vec_deadband &&  
-            fabsf(steering_angle_rad) >= vector_angle_max_rad - 1e-4f &&  
+        const bool yaw_overspeeds_des = des_active && !yaw_opposes_des &&
+            (fabsf(yaw_rate_rads) > fabsf(des_rate_rads) + radians(3.0f));
+        const bool rot_brake_cond =
+            fabsf(yaw_rate_rads) > radians(5.0f) &&
+            vec_mag >= _vec_deadband &&
+            fabsf(steering_angle_rad) >= vector_angle_max_rad - 1e-4f &&
             yaw_overspeeds_des;
 
         if (rot_brake_cond) {
@@ -759,13 +759,13 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
 
         if (!_vec_rot_brake_active && _vec_rot_brake_cnt >= 3) {
             _vec_rot_brake_cnt = 0;
-            // a latch while the coast window is armed must clear it when the  
-            // lock lands on the same side the command already sits on: the  
-            // coast block runs AFTER the brake output and would otherwise  
-            // hold the brake at zero throttle for the whole VEC_TRN_MS.  
-            if (_vec_pivot_coast_ms != 0 &&  
-                is_positive(steering_angle_rad) == is_positive(_vec_rot_brake_angle_rad)) {  
-                _vec_pivot_coast_ms = 0;  
+            // a latch while the coast window is armed must clear it when the
+            // lock lands on the same side the command already sits on: the
+            // coast block runs AFTER the brake output and would otherwise
+            // hold the brake at zero throttle for the whole VEC_TRN_MS.
+            if (_vec_pivot_coast_ms != 0 &&
+                is_positive(steering_angle_rad) == is_positive(_vec_rot_brake_angle_rad)) {
+                _vec_pivot_coast_ms = 0;
             }
             _vec_rot_brake_active = true;
             // lock onto the side the hull is rotating FROM (the overshoot
@@ -775,21 +775,26 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             // locking that side would make the "brake" accelerate the
             // overshoot. yaw_rate_rads is the authoritative side indicator
             _vec_rot_brake_angle_rad = copysignf(vector_angle_max_rad, yaw_rate_rads);
-        } else if (_vec_rot_brake_active &&  
-                   (fabsf(yaw_rate_rads) <= radians(3.0f) || _vec_throttle_filt > 0.03f || _vec_throttle_filt <= -0.05f ||  
-                    (des_active && !yaw_opposes_des &&  
+        } else if (_vec_rot_brake_active &&
+                   (fabsf(yaw_rate_rads) <= radians(3.0f) || _vec_throttle_filt > 0.03f || _vec_throttle_filt <= -0.05f ||
+                    (des_active && is_positive(des_rate_rads) != is_positive(_vec_rot_brake_angle_rad)) ||
+                    (des_active && !yaw_opposes_des &&
                      fabsf(yaw_rate_rads) < fabsf(des_rate_rads) + radians(1.0f)))) {
-            // release on ANY of: (a) |yaw_rate| collapsed under 3deg/s  
-            // (below the 5deg/s entry - hysteresis so it doesn't chatter  
-            // at the entry line); (b) surge demand (fx_filt) left the  
-            // pivot band - forward above +0.03 ends the pivot, reverse  
-            // at/below -0.05 hands control to the fold domain; or (c) the  
-            // demand agrees with the rotation direction AND the overspeed  
-            // has shrunk under |des|+1deg/s - deliberately BELOW the  
-            // |des|+3 entry line: sharing one threshold made the latch  
-            // pulse full-reverse on every boundary crossing during the  
-            // des decay ramp (log). opposite-side demands keep the latch  
-            // via yaw_opposes_des.
+            // release on ANY of: (a) |yaw_rate| collapsed under 3deg/s
+            // (below the 5deg/s entry - hysteresis so it doesn't chatter
+            // at the entry line); (b) surge demand (fx_filt) left the
+            // pivot band - forward above +0.03 ends the pivot, reverse
+            // at/below -0.05 hands control to the fold domain; or (c) the
+            // demand agrees with the rotation direction AND the overspeed
+            // has shrunk under |des|+1deg/s - deliberately BELOW the
+            // |des|+3 entry line: sharing one threshold made the latch
+            // pulse full-reverse on every boundary crossing during the
+            // des decay ramp (log). or (d) the demand flipped to the side
+            // OPPOSITE the lock: the lock side is fixed at latch (sign of
+            // yaw_rate), so once the hull crosses zero and rotates the new
+            // demanded way, reverse thrust through the old-side lock
+            // ACCELERATES that rotation - release immediately and let the
+            // coast-gated transit handle it.
             _vec_rot_brake_active = false;
 			_vec_rot_brake_cnt = 0;  // stale count during the lock would bypass
                                      // the debounce on re-entry (angle stays
@@ -806,7 +811,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             // side-flip from saturation can also arm it via the side-flip
             // trigger above (fires on sign(n) vs last steering angle).
             if (_vec_throttle_filt <= 0.03f && _vec_throttle_filt > -0.05f &&
-                is_positive(n) != is_positive(_vec_rot_brake_angle_rad)) {
+                des_active && is_positive(des_rate_rads) != is_positive(_vec_rot_brake_angle_rad)) {
                 _vec_pivot_coast_ms = AP_HAL::millis();
             }
         }
@@ -814,16 +819,16 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         if (_vec_rot_brake_active) {
             steering_angle_rad = _vec_rot_brake_angle_rad;
             const float brake_scale = MAX(_vec_brk_pct, 0.0f) * 0.01f;  // negative param must never flip the brake into forward thrust
-            // brake_frac scales with the EXCESS over the demand, not the  
-            // absolute |yaw|: the latch triggers on |yaw|>|des|+3, so the  
-            // proportional quantity is (|yaw|-|des|) normalized by the  
-            // remaining headroom (YAW_CRS_RATE-|des|). scaling by |yaw|  
-            // alone gave ~full reverse for a 3deg/s excess (log: des=10.5,  
-            // yaw=13.6 -> ratio 0.85). |n| fallback only if the  
+            // brake_frac scales with the EXCESS over the demand, not the
+            // absolute |yaw|: the latch triggers on |yaw|>|des|+3, so the
+            // proportional quantity is (|yaw|-|des|) normalized by the
+            // remaining headroom (YAW_CRS_RATE-|des|). scaling by |yaw|
+            // alone gave ~full reverse for a 3deg/s excess (log: des=10.5,
+            // yaw=13.6 -> ratio 0.85). |n| fallback only if the
             // calibration param is unset.
-            const float excess_rads = MAX(fabsf(yaw_rate_rads) - fabsf(des_rate_rads), 0.0f);  
-            const float headroom_rads = radians(_yaw_crs_rate_dps) - fabsf(des_rate_rads);  
-            const float overshoot_ratio = (is_positive(_yaw_crs_rate_dps) && headroom_rads > 0.0f) ?  
+            const float excess_rads = MAX(fabsf(yaw_rate_rads) - fabsf(des_rate_rads), 0.0f);
+            const float headroom_rads = radians(_yaw_crs_rate_dps) - fabsf(des_rate_rads);
+            const float overshoot_ratio = (is_positive(_yaw_crs_rate_dps) && headroom_rads > 0.0f) ?
                 MIN(excess_rads / headroom_rads, 1.0f) : fabsf(n);
             const float brake_frac = overshoot_ratio * brake_scale;
             // copysignf(frac, -angle) produced FORWARD thrust through the
