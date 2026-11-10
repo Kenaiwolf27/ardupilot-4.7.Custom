@@ -563,7 +563,15 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // fx_filt < -0.05 covers pivot AND idle: no surge demand means
         // nothing to fold for — prevents latch from braking residue or
         // persistent small offsets near zero. same threshold as rot-brake.
-        const bool aft_demand = _vec_throttle_filt < -0.05f;
+        // hysteresis on the surge-demand gate: enter fold below -0.05,
+        // exit only above +0.01. re-fold needs |delta|>92deg (fx_filt
+        // < ~-0.035 at full n), so the effective dead zone is
+        // (-0.035, +0.01) - absorbs ThrOut dither during the
+        // forward->pivot transition (log: pair flipped every ~1s while
+        // fx_filt hovered around -0.05) yet still releases before the
+        // +0.03 forward-demand band edge.
+        const bool aft_demand = _vec_folded ? (_vec_throttle_filt < 0.01f)
+                                            : (_vec_throttle_filt < -0.05f);
         if (!aft_demand) {
             _vec_folded = false;
         } else if (_vec_folded) {
@@ -819,18 +827,20 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         if (_vec_rot_brake_active) {
             steering_angle_rad = _vec_rot_brake_angle_rad;
             const float brake_scale = MAX(_vec_brk_pct, 0.0f) * 0.01f;  // negative param must never flip the brake into forward thrust
-            // brake_frac scales with the EXCESS over the demand, not the
-            // absolute |yaw|: the latch triggers on |yaw|>|des|+3, so the
-            // proportional quantity is (|yaw|-|des|) normalized by the
-            // remaining headroom (YAW_CRS_RATE-|des|). scaling by |yaw|
-            // alone gave ~full reverse for a 3deg/s excess (log: des=10.5,
-            // yaw=13.6 -> ratio 0.85). |n| fallback only if the
-            // calibration param is unset.
-            const float excess_rads = MAX(fabsf(yaw_rate_rads) - fabsf(des_rate_rads), 0.0f);
-            const float headroom_rads = radians(_yaw_crs_rate_dps) - fabsf(des_rate_rads);
-            const float overshoot_ratio = (is_positive(_yaw_crs_rate_dps) && headroom_rads > 0.0f) ?
-                MIN(excess_rads / headroom_rads, 1.0f) : fabsf(n);
-            const float brake_frac = overshoot_ratio * brake_scale;
+            // brake strength = the SAME calibrated pivot curve, inverted:
+            // the counter-torque needed equals the forward thrust that would
+            // produce `excess` rotation, applied as reverse. same anchor
+            // (YAW_CRS_THR at YAW_CRS_RATE), same exponent - no separate
+            // calibration, no headroom, no |n| fallback. while latched with
+            // des dropped to zero, excess = |yaw| brakes the runout
+            // proportionally. capped at 1.0 so a huge excess requests full
+            // reverse, not an unbounded value pushed downstream.
+            const float excess_rads = des_active ?
+                MAX(fabsf(yaw_rate_rads) - fabsf(des_rate_rads), 0.0f) : fabsf(yaw_rate_rads);
+            const float excess_ratio = is_positive(_yaw_crs_rate_dps) ?
+                fabsf(excess_rads) / radians(_yaw_crs_rate_dps) : fabsf(n);
+            const float brake_frac = MIN(brake_scale * (_yaw_crs_thr_pct * 0.01f) *
+                powf(excess_ratio, pivot_expo), 1.0f);
             // copysignf(frac, -angle) produced FORWARD thrust through the
             // -90deg locked stop, which the log confirmed as ~99% forward
             // (matches brake_frac*brk_asym = 0.80*1.24, unreachable via the
