@@ -348,16 +348,14 @@ void Mode::calc_throttle(float target_speed, bool avoidance_enabled)
     }
 #endif  // AP_AVOIDANCE_ENABLED
 
-    // compute freshness-gated heading error BEFORE the PID calls so the
-    // THROTTLE/speed PID I-term can be frozen directly via the motor_limit
-    // parameters (not via g2.motors.limit, which is cleared in output()
-    // before reaching the PID). freezes the throttle integrator below
-    // (get_throttle_out_stop / get_throttle_out_speed), NOT the steering
-    // I-term — the steering-rate PID has its own anti-windup via
-    // limit.steer_left/right in vectored_allocate(). steering I wind-up
-    // protection comes from the steering PID path; this freeze exists
-    // because during a pivot fx~0 would otherwise wind the speed I-term
-    bool steer_i_freeze = false;
+    // compute freshness-gated heading error BEFORE the PID calls; used by
+    // cosine reduction and the steering thrust floor below. NOTE: the
+    // speed-PID I-term freeze on yaw error was removed — it gated on yaw
+    // error, not on the actual pivot state (servo at stop). In stop-path it
+    // blocked the only mechanism (I wind-up) able to push fx past the -0.05
+    // fold threshold and unlatch a pivot; in speed-path fx is large enough
+    // that atan2 keeps the servo off the stop, so there was nothing to
+    // protect against.
     float yaw_error_rad = 0.0f;
     float yaw_error_deg = 0.0f;
     const bool steering_heading_fresh = _steering_heading_active_ms != 0 &&
@@ -365,7 +363,6 @@ void Mode::calc_throttle(float target_speed, bool avoidance_enabled)
     if (g2.motors.have_vectored_thrust() && steering_heading_fresh) {
         yaw_error_rad = wrap_180_cd(_steering_target_yaw_cd - ahrs.yaw_sensor) * (radians(1.0f) * 0.01f);
         yaw_error_deg = fabsf(degrees(yaw_error_rad));
-        steer_i_freeze = yaw_error_deg > g2.motors.get_steer_floor_ifreeze_deg();
     }
 
     // call throttle controller and convert output to -100 to +100 range
@@ -378,10 +375,10 @@ void Mode::calc_throttle(float target_speed, bool avoidance_enabled)
         // call speed or stop controller
         if (is_zero(target_speed) && !rover.is_balancebot()) {
             bool stopped;
-            throttle_out = 100.0f * attitude_control.get_throttle_out_stop(steer_i_freeze || g2.motors.limit.throttle_lower, steer_i_freeze || g2.motors.limit.throttle_upper, g.speed_cruise, g.throttle_cruise * 0.01f, rover.G_Dt, stopped);
+            throttle_out = 100.0f * attitude_control.get_throttle_out_stop(g2.motors.limit.throttle_lower, g2.motors.limit.throttle_upper, g.speed_cruise, g.throttle_cruise * 0.01f, rover.G_Dt, stopped);
         } else {
-            bool motor_lim_low = steer_i_freeze || g2.motors.limit.throttle_lower || attitude_control.pitch_limited();
-            bool motor_lim_high = steer_i_freeze || g2.motors.limit.throttle_upper || attitude_control.pitch_limited();
+            bool motor_lim_low = g2.motors.limit.throttle_lower || attitude_control.pitch_limited();
+            bool motor_lim_high = g2.motors.limit.throttle_upper || attitude_control.pitch_limited();
             throttle_out = 100.0f * attitude_control.get_throttle_out_speed(target_speed, motor_lim_low, motor_lim_high, g.speed_cruise, g.throttle_cruise * 0.01f, rover.G_Dt);
         }
 
@@ -396,8 +393,8 @@ void Mode::calc_throttle(float target_speed, bool avoidance_enabled)
     _throttle_nav_pct = throttle_out;
 
     // steering-to-throttle floor and runaway prevention (vectored-thrust safety
-    // fix). yaw_error_* and steer_i_freeze were computed above, before the PID
-    // calls, so the I-term freeze already reached the controller this tick.
+    // fix). yaw_error_* was computed above, before the PID calls.
+    // calls.
     // NOTE: cosine reduction runs on the PID part only - drift-FF is added
     // AFTER it below, otherwise FF would be zeroed exactly at large crab
     // angles where drift-hold needs it most
