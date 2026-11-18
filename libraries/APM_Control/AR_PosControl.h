@@ -115,6 +115,7 @@ private:
     bool _pos_target_valid;         // true if _pos_target is valid
     bool _vel_desired_valid;        // true if _vel_desired is valid
     bool _accel_desired_valid;      // true if _accel_desired is valid
+    bool _stopping = false;         // true when shaped target has arrived and vehicle is near destination
 
     // variables for navigation
     uint32_t _last_update_ms;       // system time of last call to update

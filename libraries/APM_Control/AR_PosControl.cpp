@@ -121,6 +121,7 @@ void AR_PosControl::update(float dt)
         _desired_speed = _atc.get_desired_speed_accel_limited(0.0f, dt);
         _desired_lat_accel = 0.0f;
         _desired_turn_rate_rads = 0.0f;
+        _stopping = false;
         return;
     }
 
@@ -142,11 +143,24 @@ void AR_PosControl::update(float dt)
     }
 
     // calculation velocity error
-    bool stopping = false;
+    // stopping state with hysteresis: enter when feedforward velocity is
+    // zero and vehicle is within 1m of target, exit beyond 1.2m. prevents
+    // deadlock where a vehicle stopped outside the waypoint radius loses
+    // all steering (lat accel clamped to zero) while the target sits behind
+    const float pos_error = _pos_target_valid ? (_pos_target - curr_pos_NED_m.xy()).length() : FLT_MAX;
+    if (_vel_desired_valid && _vel_desired.is_zero()) {
+        if (!_stopping && pos_error < 1.0f) {
+            _stopping = true;
+        } else if (_stopping && pos_error > 1.2f) {
+            _stopping = false;
+        }
+    } else {
+        _stopping = false;
+    }
+    const bool stopping = _stopping;
     if (_vel_desired_valid) {
         // add target velocity to desired velocity from position error
         _vel_target += _vel_desired;
-        stopping = _vel_desired.is_zero();
     }
 
     // limit velocity to maximum speed
@@ -206,7 +220,6 @@ void AR_PosControl::update(float dt)
 
     // calculate turn rate from desired lateral acceleration
     _desired_lat_accel = stopping ? 0 : accel_target_FR.y;
-    _desired_turn_rate_rads = _atc.get_turn_rate_from_lat_accel(_desired_lat_accel, _desired_speed);
 }
 
 // true if update has been called recently
