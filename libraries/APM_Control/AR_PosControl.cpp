@@ -220,6 +220,7 @@ void AR_PosControl::update(float dt)
 
     // calculate turn rate from desired lateral acceleration
     _desired_lat_accel = stopping ? 0 : accel_target_FR.y;
+    _desired_turn_rate_rads = _atc.get_turn_rate_from_lat_accel(_desired_lat_accel, _desired_speed);
 }
 
 // true if update has been called recently
