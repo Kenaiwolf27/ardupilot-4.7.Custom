@@ -653,6 +653,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         const float des_rate_dps = (att != nullptr) ?
             degrees(att->get_desired_turn_rate()) : 0.0f;
         const float des_rate_rads = radians(des_rate_dps);
+        const bool brake_req = (att != nullptr) && att->get_steer_brake_active();
         float t_pivot;
         if (is_positive(_yaw_crs_rate_dps) && is_positive(_yaw_crs_thr_pct)) {
             const float rate_ratio = is_positive(fabsf(des_rate_dps)) ?
@@ -723,7 +724,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         const bool off_stop    = fabsf(steering_angle_rad) < vector_angle_max_rad - 1e-4f;
         const bool demand_opposite = is_positive(n) != is_positive(_vec_last_steering_angle_rad);
         const bool flipped = is_positive(steering_angle_rad) != is_positive(_vec_last_steering_angle_rad);
-        if (!_vec_rot_brake_active &&
+        if (!_vec_rot_brake_active && !brake_req &&
             vec_mag >= _vec_deadband &&
             fabsf(n) > 0.05f &&
             (_vec_throttle_filt <= 0.03f && _vec_throttle_filt > -0.05f) &&
@@ -830,8 +831,9 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             }
         }
 
-        if (_vec_rot_brake_active) {
-            steering_angle_rad = _vec_rot_brake_angle_rad;
+        if (_vec_rot_brake_active || brake_req) {
+            steering_angle_rad = _vec_rot_brake_active ?
+                _vec_rot_brake_angle_rad : copysignf(vector_angle_max_rad, yaw_rate_rads);
             const float brake_scale = MAX(_vec_brk_pct, 0.0f) * 0.01f;  // negative param must never flip the brake into forward thrust
             // brake strength = the SAME calibrated pivot curve, inverted:
             // the counter-torque needed equals the forward thrust that would
@@ -841,8 +843,11 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
             // des dropped to zero, excess = |yaw| brakes the runout
             // proportionally. capped at 1.0 so a huge excess requests full
             // reverse, not an unbounded value pushed downstream.
-            const float excess_rads = des_active ?
-                MAX(fabsf(yaw_rate_rads) - fabsf(des_rate_rads), 0.0f) : fabsf(yaw_rate_rads);
+            // brake_req: the ramp pins des to yaw-step so |yaw|-|des| would
+            // measure ~one decel step and brake_frac would collapse - the
+            // proactive brake brakes the FULL rotation, not an overspeed.
+            const float excess_rads = (brake_req || !des_active) ?
+                fabsf(yaw_rate_rads) : MAX(fabsf(yaw_rate_rads) - fabsf(des_rate_rads), 0.0f);
             const float excess_ratio = is_positive(_yaw_crs_rate_dps) ?
                 fabsf(excess_rads) / radians(_yaw_crs_rate_dps) : fabsf(n);
             const float brake_frac = MIN(brake_scale * (_yaw_crs_thr_pct * 0.01f) *
@@ -869,6 +874,7 @@ void AP_MotorsUGV::vectored_allocate(float fx_req, float n_req, float ground_spe
         // same-side re-lock (handled in the trigger branch above)
         if (_vec_pivot_coast_ms != 0) {
             if (_vec_throttle_filt > 0.03f || _vec_throttle_filt <= -0.05f ||
+                brake_req ||
                 _vec_transit_ms <= 0 ||
                 (AP_HAL::millis() - _vec_pivot_coast_ms) >= (uint32_t)_vec_transit_ms.get()) {
                 _vec_pivot_coast_ms = 0;
