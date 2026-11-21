@@ -46,7 +46,6 @@
 #define AR_ATTCONTROL_PITCH_RELAX_RATIO 0.5f        // pitch limit relaxed 2x slower than it is limited
 #define AR_ATTCONTROL_PITCH_LIM_THR_THRESH  0.60    // pitch limiting starts if throttle exceeds 60%
 #define AR_ATTCONTROL_DT                0.02f
-#define AR_ATTCONTROL_TIMEOUT_MS        200
 #define AR_ATTCONTROL_HEEL_SAIL_P       1.0f
 #define AR_ATTCONTROL_HEEL_SAIL_I       0.1f
 #define AR_ATTCONTROL_HEEL_SAIL_D       0.0f
@@ -680,17 +679,14 @@ float AR_AttitudeControl::get_turn_rate_from_heading(float heading_rad, float ra
         desired_rate = constrain_float(desired_rate, -rate_max_rads, rate_max_rads);
     }
 
-    // limit desired_rate turn rate based on deceleration
-    if (is_positive(_steer_accel_max)) {
-        const float decel = is_positive(_steer_decel_max) ? _steer_decel_max : _steer_accel_max;
-        const float stoppable_rate = radians(sqrtf(fabsf(yaw_error) * 2.0f * degrees(decel)));
-        if (desired_rate <= -stoppable_rate) {
-            _steering_limit_left = true;
-        }
-        if (desired_rate >= stoppable_rate) {
-            _steering_limit_right = true;
-        }
-        desired_rate = constrain_float(desired_rate, -stoppable_rate, stoppable_rate);
+    // if deceleration limit is provided, ensure rate can be slowed to zero in time to stop at heading_rad (i.e. avoid overshoot)  
+    if (is_positive(_steer_decel_max)) {  
+        const float steer_decel_rate_max_rads = safe_sqrt(2.0 * fabsf(yaw_error) * radians(_steer_decel_max));  
+        desired_rate = constrain_float(desired_rate, -steer_decel_rate_max_rads, steer_decel_rate_max_rads);  
+    } else if (is_positive(_steer_accel_max)) {  
+        // if no deceleration limit, use acceleration limit  
+        const float steer_accel_rate_max_rads = safe_sqrt(2.0 * fabsf(yaw_error) * radians(_steer_accel_max));  
+        desired_rate = constrain_float(desired_rate, -steer_accel_rate_max_rads, steer_accel_rate_max_rads);  
     }
 
     // rotation braking: latch a flag when the hull can no longer stop on the

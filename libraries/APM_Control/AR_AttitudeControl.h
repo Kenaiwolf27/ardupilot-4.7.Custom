@@ -5,6 +5,8 @@
 #include <AC_PID/AC_PID.h>
 #include <AC_PID/AC_P.h>
 
+#define AR_ATTCONTROL_TIMEOUT_MS        200
+
 class AR_AttitudeControl {
 public:
 
@@ -49,7 +51,7 @@ public:
     // get_turn_rate_from_heading for >200ms (mode change, disarm).
     bool get_steer_brake_active() const {
         return _steer_brake_active &&
-               (AP_HAL::millis() - _steer_brake_last_ms) < 200;
+               (AP_HAL::millis() - _steer_brake_last_ms) < AR_ATTCONTROL_TIMEOUT_MS;
     }
 
     // get latest desired lateral acceleration in m/s/s recorded during calls to get_steering_out_lat_accel.  For reporting purposes only
