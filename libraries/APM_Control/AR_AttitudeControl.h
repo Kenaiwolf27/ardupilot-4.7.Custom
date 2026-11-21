@@ -1,6 +1,7 @@
 #pragma once
 
 #include <AP_Common/AP_Common.h>
+#include <AP_HAL/AP_HAL.h>
 #include <AC_PID/AC_PID.h>
 #include <AC_PID/AC_P.h>
 
@@ -31,7 +32,7 @@ public:
 
     // return a desired turn-rate given a desired heading in radians
     // normally the results are later passed into get_steering_out_rate
-    float get_turn_rate_from_heading(float heading_rad, float rate_max_rads) const;
+    float get_turn_rate_from_heading(float heading_rad, float rate_max_rads, float dt) const;
 
     // return a steering servo output given a desired yaw rate in radians/sec.
     // positive yaw is to the right
@@ -41,6 +42,15 @@ public:
 
     // get latest desired turn rate in rad/sec recorded during calls to get_steering_out_rate.  For reporting purposes only
     float get_desired_turn_rate() const;
+
+    // true while the heading controller requests rotation braking (pivot
+    // domain, hull rotating toward target, braking distance >= 90% of
+    // remaining error). watchdog: cleared if the controller stops calling
+    // get_turn_rate_from_heading for >200ms (mode change, disarm).
+    bool get_steer_brake_active() const {
+        return _steer_brake_active &&
+               (AP_HAL::millis() - _steer_brake_last_ms) < 200;
+    }
 
     // get latest desired lateral acceleration in m/s/s recorded during calls to get_steering_out_lat_accel.  For reporting purposes only
     float get_desired_lat_accel() const;
@@ -187,7 +197,9 @@ private:
     uint32_t _steer_lat_accel_last_ms;  // system time of last call to lateral acceleration controller (i.e. get_steering_out_lat_accel)
     uint32_t _steer_turn_last_ms;   // system time of last call to steering rate controller
     float    _desired_lat_accel;    // desired lateral acceleration (in m/s/s) from latest call to get_steering_out_lat_accel (for reporting purposes)
-    float    _desired_turn_rate;    // desired turn rate (in radians/sec) either from external caller or from lateral acceleration controller
+    float   _desired_turn_rate;     // latest desired turn rate (rad/sec) from turn rate controller
+    mutable bool     _steer_brake_active = false;   // set inside const get_turn_rate_from_heading
+    mutable uint32_t _steer_brake_last_ms = 0;      // last call timestamp for the watchdog
     bool     _steering_limit_left;  // true when the steering control has reached its left limit (e.g. motor has reached limits or accel or turn rate limits applied)
     bool     _steering_limit_right; // true when the steering control has reached its right limit (e.g. motor has reached limits or accel or turn rate limits applied)
 

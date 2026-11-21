@@ -17,6 +17,7 @@
 #include <AP_Math/AP_Math.h>
 #include <AP_HAL/AP_HAL.h>
 #include "AR_AttitudeControl.h"
+#include <AR_Motors/AP_MotorsUGV.h>
 #include <AP_GPS/AP_GPS.h>
 
 // attitude control default definition
@@ -658,15 +659,18 @@ float AR_AttitudeControl::get_steering_out_lat_accel(float desired_accel, bool m
 float AR_AttitudeControl::get_steering_out_heading(float heading_rad, float rate_max_rads, bool motor_limit_left, bool motor_limit_right, float dt)
 {
     // calculate the desired turn rate (in radians) from the angle error (also in radians)
-    float desired_rate = get_turn_rate_from_heading(heading_rad, rate_max_rads);
+    float desired_rate = get_turn_rate_from_heading(heading_rad, rate_max_rads, dt);
 
     return get_steering_out_rate(desired_rate, motor_limit_left, motor_limit_right, dt);
 }
 
 // return a desired turn-rate given a desired heading in radians
-float AR_AttitudeControl::get_turn_rate_from_heading(float heading_rad, float rate_max_rads) const
+float AR_AttitudeControl::get_turn_rate_from_heading(float heading_rad, float rate_max_rads, float dt) const
 {
     const float yaw_error = wrap_PI(heading_rad - AP::ahrs().get_yaw_rad());
+    const float yaw_rate = AP::ahrs().get_yaw_rate_earth();
+    dt = constrain_float(dt, 0.0f, 1.0f);
+    _steer_brake_last_ms = AP_HAL::millis();
 
     // Calculate the desired turn rate (in radians) from the angle error (also in radians)
     float desired_rate = _steer_angle_p.get_p(yaw_error);
@@ -676,14 +680,48 @@ float AR_AttitudeControl::get_turn_rate_from_heading(float heading_rad, float ra
         desired_rate = constrain_float(desired_rate, -rate_max_rads, rate_max_rads);
     }
 
-    // if deceleration limit is provided, ensure rate can be slowed to zero in time to stop at heading_rad (i.e. avoid overshoot)
-    if (is_positive(_steer_decel_max)) {
-        const float steer_decel_rate_max_rads = safe_sqrt(2.0 * fabsf(yaw_error) * radians(_steer_decel_max));
-        desired_rate = constrain_float(desired_rate, -steer_decel_rate_max_rads, steer_decel_rate_max_rads);
-    } else if (is_positive(_steer_accel_max)) {
-        // if no deceleration limit, use acceleration limit
-        const float steer_accel_rate_max_rads = safe_sqrt(2.0 * fabsf(yaw_error) * radians(_steer_accel_max));
-        desired_rate = constrain_float(desired_rate, -steer_accel_rate_max_rads, steer_accel_rate_max_rads);
+    // limit desired_rate turn rate based on deceleration
+    if (is_positive(_steer_accel_max)) {
+        const float decel = is_positive(_steer_decel_max) ? _steer_decel_max : _steer_accel_max;
+        const float stoppable_rate = radians(sqrtf(fabsf(yaw_error) * 2.0f * degrees(decel)));
+        if (desired_rate <= -stoppable_rate) {
+            _steering_limit_left = true;
+        }
+        if (desired_rate >= stoppable_rate) {
+            _steering_limit_right = true;
+        }
+        desired_rate = constrain_float(desired_rate, -stoppable_rate, stoppable_rate);
+    }
+
+    // rotation braking: latch a flag when the hull can no longer stop on the
+    // target with 10% reserve (v^2 = 2*a*d, same profile as the sqrt cap
+    // above). gated to the pivot domain (vectored thrust, servo at a stop)
+    // and to rotation toward the target. enter at 0.9*|err|, clear below
+    // 0.7*|err| (hysteresis) or when the domain/rotation conditions fail.
+    const AP_MotorsUGV *motors = AP_MotorsUGV::get_singleton();
+    const float stop_angle_rad = (motors != nullptr && motors->have_vectored_thrust()) ?
+        radians(MAX(motors->get_vector_angle_max() - 10.0f, 0.0f)) : 0.0f;
+    const bool pivot_domain = is_positive(stop_angle_rad) &&
+        (fabsf(motors->get_vectored_angle_rad()) >= stop_angle_rad);
+    const bool rotating_to_target = is_positive(yaw_rate) == is_positive(yaw_error);
+    const float decel = is_positive(_steer_decel_max) ? _steer_decel_max : _steer_accel_max;
+    const float braking_dist = is_positive(decel) ?
+        (yaw_rate * yaw_rate) / (2.0f * radians(decel)) : 0.0f;
+    if (pivot_domain && rotating_to_target && fabsf(yaw_rate) > radians(1.0f) &&
+        braking_dist >= fabsf(yaw_error) * 0.9f) {
+        _steer_brake_active = true;
+    } else if (!pivot_domain || !rotating_to_target || fabsf(yaw_rate) <= radians(1.0f) ||
+               braking_dist < fabsf(yaw_error) * 0.7f) {
+        _steer_brake_active = false;
+    }
+
+    // while braking, shadow the demand one decel step below the actual rate:
+    // keeps des ~ yaw so the runaway brake's overspeed test stays false, and
+    // hands off smoothly to the P-term when the flag clears. the real
+    // counter-thrust comes from the allocator's brake block, not from this.
+    if (_steer_brake_active) {
+        const float step = radians(MIN(decel, _steer_accel_max)) * dt;
+        desired_rate = yaw_rate - copysignf(step, yaw_rate);
     }
 
     return desired_rate;
