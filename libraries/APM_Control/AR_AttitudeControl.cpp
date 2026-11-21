@@ -609,12 +609,13 @@ const AP_Param::GroupInfo AR_AttitudeControl::var_info[] = {
     AP_GROUPINFO("_DEC_MIN", 20, AR_AttitudeControl, _throttle_decel_min, 0.005f),
 
     // @Param: _DEC_BRK
-    // @DisplayName: Speed control braking deceleration multiplier
-    // @Description: Multiplier applied to the coasting deceleration curve (ATC_DEC_V2*speed^2 + ATC_DEC_MIN) when braking with reversed motor output (requires ATC_BRAKE=1). Values above 1.0 model reverse propeller thrust adding to hydrodynamic drag. 1.0 = same as coasting, 0 is treated as 1.0. Only used when ATC_DEC_V2 is non-zero.
-    // @Range: 0.0 5.0
-    // @Increment: 0.1
+    // @DisplayName: Speed control braking deceleration addend
+    // @Description: Additional deceleration in m/s/s added to the coasting curve (ATC_DEC_V2*speed^2 + ATC_DEC_MIN) when braking with reversed motor output (requires ATC_BRAKE=1). Models reverse propeller thrust as a roughly constant extra braking force on top of hydrodynamic drag. 0 = same as coasting. Only used when ATC_DEC_V2 is non-zero.
+    // @Range: 0.0 0.5
+    // @Increment: 0.01
+    // @Units: m/s/s
     // @User: Advanced
-    AP_GROUPINFO("_DEC_BRK", 21, AR_AttitudeControl, _throttle_decel_brake_mult, 2.5f),
+    AP_GROUPINFO("_DEC_BRK", 21, AR_AttitudeControl, _throttle_decel_brake_mult, 0.10f),
 
     AP_GROUPEND
 };
@@ -1101,9 +1102,12 @@ float AR_AttitudeControl::get_decel_max_at_speed(float speed, bool braking) cons
     // get_stopping_distance() diverge (integrand ~1/v) even though the ramp is finite
     float decel = _throttle_decel_v2 * sq(speed) + MAX(_throttle_decel_min, 0.005f);
     if (braking && _brake_enable && is_positive(_throttle_decel_brake_mult)) {
-        // reversed motor output adds thrust to hydrodynamic drag
-        decel *= _throttle_decel_brake_mult;
+        // reversed motor output adds a roughly constant braking force on top
+        // of hydrodynamic drag (additive, not multiplicative: measured brake
+        // decel is ~flat vs the quadratic coast curve)
+        decel += _throttle_decel_brake_mult;
     }
+
     return decel;
 }
 
@@ -1151,12 +1155,12 @@ float AR_AttitudeControl::get_desired_speed_accel_limited(float desired_speed, f
     // speed-dependent curves are evaluated at the current desired speed
     float speed_change_max;
     if (fabsf(desired_speed) < fabsf(_desired_speed)) {
-        // slowing down: deceleration curve. braking=true only while moving  
-        // forward (prev positive): slowing then means counter-thrust via  
-        // REVERSED prop, which is what DEC_BRK was tuned for. slowing out of  
-        // reverse means forward thrust - a different prop asymmetry DEC_BRK  
-        // does not model.  
-        speed_change_max = get_decel_max_at_speed(_desired_speed,  
+        // slowing down: deceleration curve. braking=true only while moving
+        // forward (prev positive): slowing then means counter-thrust via
+        // REVERSED prop, which is what DEC_BRK was tuned for. slowing out of
+        // reverse means forward thrust - a different prop asymmetry DEC_BRK
+        // does not model.
+        speed_change_max = get_decel_max_at_speed(_desired_speed,
                                                 is_positive(_desired_speed)) * dt;
     } else {
         // speeding up: acceleration curve

@@ -129,7 +129,7 @@ public:
     float get_accel_max_at_speed(float speed) const;
 
     // get speed-dependent deceleration limit in m/s/s for the given speed (m/s).
-    // quadratic curve _throttle_decel_v2*speed^2 + _throttle_decel_min, multiplied by _throttle_decel_brake_mult when braking; falls back to get_decel_max() when _throttle_decel_v2 is zero
+    // quadratic curve _throttle_decel_v2*speed^2 + _throttle_decel_min, plus _throttle_decel_brake_mult added when braking; falls back to get_decel_max() when _throttle_decel_v2 is zero
     float get_decel_max_at_speed(float speed, bool braking) const;
 
     // check if speed controller active
@@ -175,7 +175,7 @@ private:
     AP_Float _throttle_accel_veq;   // equilibrium speed (m/s) for speed-dependent acceleration limit. 0 = constant limit
     AP_Float _throttle_decel_v2;    // quadratic coefficient of speed-dependent deceleration limit. 0 = constant limit
     AP_Float _throttle_decel_min;   // minimum deceleration floor for the quadratic deceleration curve (m/s/s)
-    AP_Float _throttle_decel_brake_mult; // multiplier of deceleration curve when braking with reversed output (ATC_BRAKE=1)
+    AP_Float _throttle_decel_brake_mult; // additive deceleration (m/s/s) when braking with reversed output (ATC_BRAKE=1)
     AP_Int8  _brake_enable;         // speed control brake enable/disable. if set to 1 a reversed output to the motors to slow the vehicle.
     AP_Float _stop_speed;           // speed control stop speed.  Motor outputs to zero once vehicle speed falls below this value
     AP_Float _steer_accel_max;      // steering angle acceleration max in deg/s/s
