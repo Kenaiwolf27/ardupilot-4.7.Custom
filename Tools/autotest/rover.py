@@ -7363,15 +7363,20 @@ return update()
         '''drive each frame (except BalanceBot) in a mission to ensure basic functionality'''
         vinfo = vehicleinfo.VehicleInfo()
         vinfo_options = vinfo.options[self.vehicleinfo_key()]
-        known_broken_frames = {
-            "balancebot": "needs special stay-upright code",
-            "motorboat-skid": "gets stuck between waypoints 2 and 3",
-        }
-        for frame in sorted(vinfo_options["frames"].keys()):
-            self.start_subtest("Testing frame (%s)" % str(frame))
-            if frame in known_broken_frames:
-                self.progress("Actually, no I'm not - it is known-broken (%s)" %
-                              (known_broken_frames[frame]))
+        known_broken_frames = {  
+            "balancebot": "needs special stay-upright code",  
+            "motorboat-skid": "gets stuck between waypoints 2 and 3",  
+        }  
+        # this fork only supports the vectored-thrust boat - skip all other frames  
+        wanted_frames = {"rover-vectored"}  
+        for frame in sorted(vinfo_options["frames"].keys()):  
+            self.start_subtest("Testing frame (%s)" % str(frame))  
+            if frame not in wanted_frames:  
+                self.progress("Actually, no I'm not - not a supported frame on this fork")  
+                continue  
+            if frame in known_broken_frames:  
+                self.progress("Actually, no I'm not - it is known-broken (%s)" %  
+                              (known_broken_frames[frame]))  
                 continue
             frame_bits = vinfo_options["frames"][frame]
             print("frame_bits: %s" % str(frame_bits))
