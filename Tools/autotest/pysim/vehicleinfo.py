@@ -419,8 +419,8 @@ class VehicleInfo(object):
             },
         },
     },
-    "Rover": {
-        "default_frame": "rover",
+    "Rover": {  
+        "default_frame": "rover-vectored",
         "frames": {
             # ROVER
             "rover": {
