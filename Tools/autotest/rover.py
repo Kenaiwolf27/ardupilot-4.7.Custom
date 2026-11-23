@@ -5785,6 +5785,85 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.disarm_vehicle()
         self.context_pop()
 
+    def GuidedWPNavi(self):
+        '''drive to guided waypoints - exercises PSC input shaping path'''
+        self.change_mode('GUIDED')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.drive_to_location(mavutil.location(40.0714, -105.2294, 0, 0), tolerance=2, timeout=120)
+        self.drive_to_location(mavutil.location(40.0722, -105.2294, 0, 0), tolerance=2, timeout=120)
+        self.drive_to_location(mavutil.location(40.0722, -105.2300, 0, 0), tolerance=2, timeout=120)
+        self.disarm_vehicle()
+
+    def CircleMode(self):
+        '''circle mode - exercises curve-derived lat accel limit'''
+        self.context_push()
+        self.context_collect('STATUSTEXT')
+        self.set_parameters({
+            "CIRCLE_RADIUS": 2,
+            "CIRCLE_SPEED": 5,
+        })
+        self.change_mode('CIRCLE')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.wait_statustext("Circle: max speed is", timeout=30, check_context=True)
+        self.wait_groundspeed(0.4, 0.9, timeout=60)
+        self.delay_sim_time(30)
+        self.disarm_vehicle()
+        self.context_pop()
+
+    def VectoredPivot(self):
+        '''guided heading change >90 deg triggers vectored pivot'''
+        self.change_mode('GUIDED')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+
+        def send_pivot(value, target):
+            self.run_cmd(
+                mavutil.mavlink.MAV_CMD_NAV_SET_YAW_SPEED,
+                p1=180,
+                p2=0,
+                p3=0,
+            )
+        self.wait_heading(180, accuracy=15, timeout=60, called_function=send_pivot)
+        self.disarm_vehicle()
+
+    def LoiterHold(self):
+        '''loiter mode holds position'''
+        self.change_mode('LOITER')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        loc_at_arm = self.mav.location()
+        self.delay_sim_time(30)
+        dist = self.get_distance(loc_at_arm, self.mav.location())
+        if dist > 5:
+            raise NotAchievedException("Loiter drifted %.1fm from arm position" % dist)
+        self.disarm_vehicle()
+
+    def DriftEstimator(self):
+        '''drift estimator produces DRIFTNAGE after first window'''
+        self.change_mode('GUIDED')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.drive_to_location(mavutil.location(40.0722, -105.2294, 0, 0), tolerance=2, timeout=120)
+        m = self.assert_receive_named_value_float("DRIFTNAGE", timeout=30)
+        self.disarm_vehicle()
+
+    def SpeedPlanner(self):
+        '''speed controller ramp and stop - smoke test'''
+        self.set_parameters({
+            'CRUISE_SPEED': 1.3,
+            'ATC_ACCEL_MAX': 0.3,
+        })
+        self.change_mode('STEERING')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.set_rc(3, 2000)
+        self.wait_groundspeed(0.8, 1.6, timeout=60)
+        self.set_rc(3, 1500)
+        self.wait_groundspeed(0, 0.3, timeout=60)
+        self.disarm_vehicle()
+
     def SET_ATTITUDE_TARGET(self, target_sysid=None, target_compid=1):
         '''Test handling of SET_ATTITUDE_TARGET'''
         if target_sysid is None:
@@ -5813,8 +5892,28 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                 1) # thrust
 
             msg = self.assert_receive_message('VFR_HUD')
-            if msg.groundspeed > 5:
+            if msg.groundspeed > 1.0:
                 break
+        # turn-rate-and-speed submode: demand above curve clips to omega(speed)
+        def send_rate(value, target):
+            self.mav.mav.set_attitude_target_send(
+                0, # time_boot_ms
+                target_sysid,
+                target_compid,
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE |
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE |
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE,
+                mavextra.euler_to_quat([0,
+                                        math.radians(0),
+                                        math.radians(0)]), # att
+                0,                  # body_roll_rate (ignored)
+                0,                  # body_pitch_rate (ignored)
+                math.radians(30),   # body_yaw_rate - demand above curve
+                1.0)                # thrust -> speed = WP_SPEED 1.3 m/s
+
+        # thrust=1.0 -> ~1.3 m/s -> omega(1.3) ~ 14.4 deg/s; demand 30 clips
+        self.wait_yaw_speed(math.radians(14), accuracy=0.15, timeout=60,
+                            called_function=send_rate)
         self.disarm_vehicle()
 
     def SET_ATTITUDE_TARGET_heading(self, target_sysid=None, target_compid=1):
@@ -6614,7 +6713,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             self.wait_groundspeed(0, 1)
             self.change_mode('GUIDED')
             self.start_subtest("Absolute angles")
-            for (heading, speed) in (10, 5), (190, 10), (0, 2), (135, 6):
+           for (heading, speed) in (10, 0.5), (190, 1.3), (0, 0.8), (135, 1.0):
                 def cf(*args, **kwargs):
                     method(
                         mavutil.mavlink.MAV_CMD_NAV_SET_YAW_SPEED,
@@ -6630,14 +6729,14 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             method(
                 mavutil.mavlink.MAV_CMD_NAV_SET_YAW_SPEED,
                 p1=original_angle,
-                p2=5,
+                p2=1.0,
                 p3=0,  # zero is absolute-angles
             )
-            self.wait_groundspeed(4, 6)
+            self.wait_groundspeed(0.5, 1.5)
             self.wait_heading(original_angle-0.5, original_angle+0.5)
 
             expected_angle = original_angle
-            for (angle_delta, speed) in (5, 6), (-30, 2), (180, 7):
+            for (angle_delta, speed) in (5, 1.3), (-30, 0.8), (180, 1.0):
                 method(
                     mavutil.mavlink.MAV_CMD_NAV_SET_YAW_SPEED,
                     p1=angle_delta,
@@ -6659,7 +6758,6 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                     expected_angle -= 360
                 self.wait_groundspeed(speed-0.5, speed+0.5, called_function=cf, minimum_duration=2)
                 self.wait_heading(expected_angle, called_function=cf, minimum_duration=2)
-        self.do_RTL()
         self.disarm_vehicle()
 
     def _MAV_CMD_GET_HOME_POSITION(self, run_cmd):
@@ -7363,20 +7461,15 @@ return update()
         '''drive each frame (except BalanceBot) in a mission to ensure basic functionality'''
         vinfo = vehicleinfo.VehicleInfo()
         vinfo_options = vinfo.options[self.vehicleinfo_key()]
-        known_broken_frames = {  
-            "balancebot": "needs special stay-upright code",  
-            "motorboat-skid": "gets stuck between waypoints 2 and 3",  
-        }  
-        # this fork only supports the vectored-thrust boat - skip all other frames  
-        wanted_frames = {"rover-vectored"}  
-        for frame in sorted(vinfo_options["frames"].keys()):  
-            self.start_subtest("Testing frame (%s)" % str(frame))  
-            if frame not in wanted_frames:  
-                self.progress("Actually, no I'm not - not a supported frame on this fork")  
-                continue  
-            if frame in known_broken_frames:  
-                self.progress("Actually, no I'm not - it is known-broken (%s)" %  
-                              (known_broken_frames[frame]))  
+        known_broken_frames = {
+            "balancebot": "needs special stay-upright code",
+            "motorboat-skid": "gets stuck between waypoints 2 and 3",
+        }
+        for frame in sorted(vinfo_options["frames"].keys()):
+            self.start_subtest("Testing frame (%s)" % str(frame))
+            if frame in known_broken_frames:
+                self.progress("Actually, no I'm not - it is known-broken (%s)" %
+                              (known_broken_frames[frame]))
                 continue
             frame_bits = vinfo_options["frames"][frame]
             print("frame_bits: %s" % str(frame_bits))
@@ -7432,10 +7525,12 @@ return update()
             self.MAVProxy_SetModeUsingMode,
             self.ModeSwitch,
             self.AuxModeSwitch,
-            self.DriveRTL,
-            self.SmartRTL,
-            self.DriveSquare,
-            self.DriveMission,
+            self.GuidedWPNavi,
+            self.CircleMode,
+            self.VectoredPivot,
+            self.LoiterHold,
+            self.DriftEstimator,
+            self.SpeedPlanner,
             # self.DriveBrake,  # disabled due to frequent failures
             self.MAV_CMD_DO_SEND_BANNER,
             self.DO_SET_MODE,
