@@ -69,7 +69,7 @@ class AutoTestRover(vehicle_test_suite.TestSuite):
         return SITL_START_LOCATION
 
     def default_frame(self):
-        return "rover"
+        return "rover-vectored"
 
     def default_speedup(self):
         return 30
@@ -5800,8 +5800,8 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.context_push()
         self.context_collect('STATUSTEXT')
         self.set_parameters({
-            "CIRCLE_RADIUS": 2,
-            "CIRCLE_SPEED": 5,
+            "CIRC_RADIUS": 2,
+            "CIRC_SPEED": 5,
         })
         self.change_mode('CIRCLE')
         self.wait_ready_to_arm()
@@ -5818,12 +5818,28 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.wait_ready_to_arm()
         self.arm_vehicle()
 
-        def send_pivot(value, target):
-            self.run_cmd(
-                mavutil.mavlink.MAV_CMD_NAV_SET_YAW_SPEED,
-                p1=180,
-                p2=0,
-                p3=0,
+        def send_pivot(value, target):  
+            type_mask = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE +  
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE)  
+            self.mav.mav.set_position_target_global_int_send(  
+                0,  
+                1,  
+                1,  
+                mavutil.mavlink.MAV_FRAME_GLOBAL_INT,  
+                type_mask,  
+                0, 0, 0,        # lat, lon, alt (ignored)  
+                0, 0, 0,        # vx, vy, vz (ignored)  
+                0, 0, 0,        # afx, afy, afz (ignored)  
+                math.radians(180),  # yaw  
+                0,              # yaw-rate (ignored)  
             )
         self.wait_heading(180, accuracy=15, timeout=60, called_function=send_pivot)
         self.disarm_vehicle()
