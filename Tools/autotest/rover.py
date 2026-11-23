@@ -6713,7 +6713,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             self.wait_groundspeed(0, 1)
             self.change_mode('GUIDED')
             self.start_subtest("Absolute angles")
-           for (heading, speed) in (10, 0.5), (190, 1.3), (0, 0.8), (135, 1.0):
+            for (heading, speed) in (10, 0.5), (190, 1.3), (0, 0.8), (135, 1.0):
                 def cf(*args, **kwargs):
                     method(
                         mavutil.mavlink.MAV_CMD_NAV_SET_YAW_SPEED,
@@ -7465,8 +7465,14 @@ return update()
             "balancebot": "needs special stay-upright code",
             "motorboat-skid": "gets stuck between waypoints 2 and 3",
         }
+        # this fork only runs the vectored-thrust frame; other frames use
+        # params/models incompatible with the fork's control changes
+        wanted_frames = {"rover-vectored"}
         for frame in sorted(vinfo_options["frames"].keys()):
             self.start_subtest("Testing frame (%s)" % str(frame))
+            if frame not in wanted_frames:
+                self.progress("Skipping frame (%s) - not used by this fork" % str(frame))
+                continue
             if frame in known_broken_frames:
                 self.progress("Actually, no I'm not - it is known-broken (%s)" %
                               (known_broken_frames[frame]))
