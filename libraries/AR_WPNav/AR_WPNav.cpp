@@ -114,7 +114,7 @@ void AR_WPNav::init(float speed_max)
     const float jerk_max = is_positive(_jerk_max) ? _jerk_max : accel_max;
 
     // initialise position controller
-    _pos_control.set_limits(_base_speed_max, accel_max, _atc.get_turn_lat_accel_max(), jerk_max);
+    _pos_control.set_limits(_base_speed_max, accel_max, _atc.get_lat_accel_max_for_speed(_base_speed_max), jerk_max);
 
     _scurve_prev_leg.init();
     _scurve_this_leg.init();
@@ -624,7 +624,8 @@ void AR_WPNav::update_speed_max()
     _last_speed_update_ms = now_ms;
 
     // update position controller max speed
-    _pos_control.set_limits(speed_max, _pos_control.get_accel_max(), _pos_control.get_lat_accel_max(), _pos_control.get_jerk_max());
+    // recompute lat accel for the new speed (nudge may exceed base speed)
+    _pos_control.set_limits(speed_max, _pos_control.get_accel_max(), _atc.get_lat_accel_max_for_speed(speed_max), _pos_control.get_jerk_max());
 
     // change track speed
     _scurve_this_leg.set_speed_max(_pos_control.get_speed_max(), _pos_control.get_speed_max(), _pos_control.get_speed_max());
