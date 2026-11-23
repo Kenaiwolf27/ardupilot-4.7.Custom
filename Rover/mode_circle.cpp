@@ -99,7 +99,7 @@ bool ModeCircle::_enter()
     // check speed around circle does not lead to excessive lateral acceleration
     check_config_speed();
 
-    // reset tracking_back 
+    // reset tracking_back
     tracking_back = false;
 
     // calculate speed, accel and jerk limits
@@ -112,7 +112,10 @@ bool ModeCircle::_enter()
     const float jerk_max = is_positive(g2.wp_nav.get_default_jerk()) ? g2.wp_nav.get_default_jerk() : accel_max;
 
     // initialise position controller
-    g2.pos_control.set_limits(config.speed, accel_max, g2.attitude_control.get_turn_lat_accel_max(), jerk_max);
+    // lat accel limit evaluated at the (already clamped) circle speed -
+    // tightest case since the curve is non-increasing. No margin: planner
+    // ceiling must equal the PID ceiling bit-for-bit.
+    g2.pos_control.set_limits(config.speed, accel_max, g2.attitude_control.get_lat_accel_max_for_speed(config.speed), jerk_max);
     g2.pos_control.init();
 
     // initialise angles covered and reached_edge state
@@ -277,13 +280,15 @@ bool ModeCircle::set_desired_speed(float speed_ms)
         // check desired speed does not lead to excessive lateral acceleration
         check_config_speed();
 
-        // update position controller limits if required
-        if (config.speed > g2.pos_control.get_speed_max()) {
-            g2.pos_control.set_limits(config.speed, g2.pos_control.get_accel_max(), g2.pos_control.get_lat_accel_max(), g2.pos_control.get_jerk_max());
+        // update position controller limits on ANY speed change - lat accel
+        // must be recomputed from the curve, not recycled (recycling would
+        // silently restore the stale constant-G limit this fix removes)
+        if (!is_equal(config.speed, g2.pos_control.get_speed_max())) {
+            g2.pos_control.set_limits(config.speed, g2.pos_control.get_accel_max(), g2.attitude_control.get_lat_accel_max_for_speed(config.speed), g2.pos_control.get_jerk_max());
         }
         return true;
     }
- 
+
     return false;
 }
 
@@ -300,8 +305,24 @@ bool ModeCircle::get_desired_location(Location& destination) const
 // outputs warning to user if speed is reduced
 void ModeCircle::check_config_speed()
 {
-    // calculate maximum speed based on radius and max lateral acceleration max
-    const float speed_max = MAX(safe_sqrt(g2.attitude_control.get_turn_lat_accel_max() * config.radius), 0);
+    // maximum speed for this radius from the fitted turn-rate curve:
+    // solve v = omega(v) * r by bisection on [0, omega(0)*r].
+    // (fixed-point iteration v <- omega(v)*r oscillates for r > ~1.7m
+    // because |omega'|max * r > 1; bisection is unconditionally convergent)
+    float speed_max = 0.0f;
+    if (is_positive(config.radius)) {
+        float lo = 0.0f;
+        float hi = g2.attitude_control.get_turn_rate_max_for_speed(0.0f) * config.radius;
+        for (uint8_t i = 0; i < 10; i++) {
+            const float mid = 0.5f * (lo + hi);
+            if (g2.attitude_control.get_turn_rate_max_for_speed(mid) * config.radius >= mid) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        speed_max = lo;
+    }
 
     if (config.speed > speed_max) {
         config.speed = speed_max;
