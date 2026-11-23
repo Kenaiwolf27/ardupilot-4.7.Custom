@@ -69,6 +69,15 @@ public:
     // ATC_TURN_MAX_G / get_turn_lat_accel_max().
     float get_turn_rate_max_for_speed(float speed) const;
 
+    // get the lateral acceleration limit (m/s/s) at a given forward speed,
+    // derived from the fitted speed->max_turn_rate curve so that planners
+    // use the same ceiling as the steering PID limiter. Floor matches the
+    // radians(1.0f) floor in get_steering_out_rate for consistency.
+    float get_lat_accel_max_for_speed(float speed) const {
+        const float v = fabsf(speed);
+        return MAX(get_turn_rate_max_for_speed(v), radians(1.0f)) * v;
+    }
+
     // get the lateral acceleration limit (in m/s/s).  Returns at least 0.1G or approximately 1 m/s/s
     float get_turn_lat_accel_max() const { return MAX(_turn_lateral_G_max, 0.1f) * GRAVITY_MSS; }
 
