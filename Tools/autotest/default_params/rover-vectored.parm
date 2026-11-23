@@ -110,7 +110,7 @@ MOT_SAFE_DISARM  0
 # outputs - overit voci SITL vectored modelu  
 SERVO1_FUNCTION  26  
 SERVO3_FUNCTION  70  
-SERVO1_REVERSED  1  
+SERVO1_REVERSED  0  
   
 # pilot input  
 PILOT_STEER_TYPE 0  
