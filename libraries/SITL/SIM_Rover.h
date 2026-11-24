@@ -47,9 +47,12 @@ private:
     bool skid_steering;                 // true if this vehicle is a skid-steering vehicle
 
     // vectored thrust related members
+    // vectored thrust related members
     bool vectored_thrust;                   // true if vehicle uses vectored thrust (i.e. steering controls direction of thrust)
     float vectored_angle_max = 90.0f;       // maximum angle (in degrees) to which thrust can be turned
     float vectored_turn_rate_max = 90.0f;   // maximum turn rate (in deg/sec) with full throttle angled at 90deg
+    float vectored_yaw_rate = 0.0f;         // lagged yaw rate state (deg/s) - models hull rotational inertia
+    float vectored_yaw_tc = 1.5f;           // yaw rate first-order lag time constant (s) - heavy boat responds slowly
 
     // omni3 Mecanum related members
     bool omni3;                             // true if vehicle is omni-directional with 3 Mecanum wheels
