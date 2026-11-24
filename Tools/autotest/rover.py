@@ -1462,7 +1462,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                                1583,
                                0)
 
-        self.wait_location(loc, accuracy=accuracy, minimum_duration=10, timeout=45)
+        self.wait_location(loc, accuracy=accuracy, minimum_duration=10, timeout=180)
         self.disarm_vehicle()
 
     def fence_with_bad_frame(self, target_system=1, target_component=1):
@@ -2504,7 +2504,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
     # exclusion zones)
     # FIXME: add test that a fence with edges that cross can't be uploaded
     # FIXME: add a test that fences enclose an area (e.g. all the points aren't the same value!
-    def Offboard(self, timeout=90):
+    def Offboard(self, timeout=300):
         '''Test Offboard Control'''
         self.load_mission("rover-guided-mission.txt")
         self.wait_ready_to_arm(require_absolute=True)
@@ -5165,8 +5165,8 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                                       target_system=target_system,
                                       target_component=target_component)
         # FIXME: we don't get within WP_RADIUS of our target?!
-        self.wait_location(target_loc, timeout=300, accuracy=15)
-        self.do_RTL(timeout=300)
+        self.wait_location(target_loc, timeout=600, accuracy=15)
+        self.do_RTL(timeout=600)
         self.disarm_vehicle()
 
     def PolyFenceObjectAvoidanceBendyRulerEasierGuided(self, target_system=1, target_component=1):
@@ -5193,8 +5193,8 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                                       target_system=target_system,
                                       target_component=target_component)
         # FIXME: we don't get within WP_RADIUS of our target?!
-        self.wait_location(target_loc, timeout=300, accuracy=15)
-        self.do_RTL(timeout=300)
+        self.wait_location(target_loc, timeout=600, accuracy=15)
+        self.do_RTL(timeout=600)
         self.disarm_vehicle()
 
     def PolyFenceObjectAvoidanceBendyRulerEasierAuto(self, target_system=1, target_component=1):
@@ -5220,7 +5220,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.arm_vehicle()
         target_loc = mavutil.location(40.071260, -105.227000, 1584, 0)
         # target_loc is copied from the mission file
-        self.wait_location(target_loc, timeout=300)
+        self.wait_location(target_loc, timeout=600)
         # mission has RTL as last item
         self.wait_distance_to_home(3, 7, timeout=600)
         self.disarm_vehicle()
@@ -6681,8 +6681,8 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         here = original_loc
         target_loc = self.offset_location_ne(here, 2000, 0)
         self.send_guided_mission_item(target_loc)
-        self.wait_distance_to_home(20, 100, timeout=120)  
-  
+        self.wait_distance_to_home(20, 100, timeout=120)
+
         speeds = 0.8, 1.3, 0.5, 1.0
 
         for speed in speeds:

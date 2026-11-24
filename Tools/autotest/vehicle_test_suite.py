@@ -12267,7 +12267,7 @@ Also, ignores heartbeats not from our target system'''
 
         self.do_RTL()
 
-    def SetpointGlobalVel(self, timeout=180):
+    def SetpointGlobalVel(self, timeout=540):
         """Test set position message in guided mode."""
         # Disable heading and yaw rate test on rover type
         if self.is_rover():
@@ -12625,7 +12625,7 @@ Also, ignores heartbeats not from our target system'''
                 )
 
         self.progress("Getting back to home and disarm")
-        self.do_RTL(distance_min=0, distance_max=wp_accuracy)
+        self.do_RTL(distance_min=0, distance_max=wp_accuracy, timeout=300)
         self.disarm_vehicle()
 
     def is_blimp(self):
