@@ -168,14 +168,6 @@ void SimRover::update_ackermann_or_skid(const struct sitl_input &input, float de
     // yaw rate in degrees/s
     float yaw_rate = calc_yaw_rate(steering, speed);
 
-    // vectored thrust: first-order lag on yaw rate models hull rotational
-    // inertia - instant response makes the FOSSEN allocator's coast/brake
-    // logic oscillate (it expects a heavy boat that keeps rotating)
-    if (vectored_thrust) {
-        vectored_yaw_rate += (yaw_rate - vectored_yaw_rate) * (delta_time / vectored_yaw_tc);
-        yaw_rate = vectored_yaw_rate;
-    }
-
     // target speed with current throttle
     float target_speed = throttle * max_speed;
 
