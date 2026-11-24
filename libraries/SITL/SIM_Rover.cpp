@@ -105,10 +105,11 @@ void SimRover::update(const struct sitl_input &input)
     // update gyro and accel_body according to frame type
     if (omni3) {
         update_omni3(input, delta_time);
+    } else if (vectored_thrust) {
+        update_vectored_boat(input, delta_time);
     } else {
         update_ackermann_or_skid(input, delta_time);
     }
-
     // common to all rovers
 
     // now in earth frame
@@ -156,13 +157,6 @@ void SimRover::update_ackermann_or_skid(const struct sitl_input &input, float de
         // should yield no servo movement
         steering = input.servos[0] ? normalise_servo_input(input.servos[0]) : 0;
         throttle = input.servos[2] ? normalise_servo_input(input.servos[2]) : 0;
-
-        // vectored thrust conversion
-        if (vectored_thrust) {
-            const float steering_angle_rad = radians(steering * vectored_angle_max);
-            steering = sinf(steering_angle_rad) * throttle;
-            throttle *= cosf(steering_angle_rad);
-        }
     }
 
     // speed in m/s in body frame
@@ -199,6 +193,71 @@ void SimRover::update_ackermann_or_skid(const struct sitl_input &input, float de
 
     // add in accel due to direction change
     accel_body.y += radians(yaw_rate) * speed;
+}
+
+/*
+  update the vectored-thrust boat simulation by one time step
+
+  3-DOF (surge/sway/yaw) lumped-parameter model in Fossen form for a
+  ~3.7m / 250kg boat with a single steerable stern thruster:
+
+    (m + X_udot) * du = fx - Xu*u - Xuu*|u|*u + m*r*v
+    (m + Y_vdot) * dv = fy - Yv*v - Yvv*|v|*v - m*r*u
+    Iz * dr          = arm*fy - Nr*r - Nrr*|r|*r
+
+  u/v are not integrated separately - they are derived from
+  velocity_ef each tick so the model can never diverge from the
+  position/velocity that Aircraft integrates downstream. Only yaw
+  rate (boat_r) is integrated internally because Aircraft has no
+  angular-rate state.
+
+  yaw moment comes only from the lateral thrust component fy: at
+  zero throttle a stern thruster has no yaw authority, which matches
+  the real boat (the FOSSEN allocator always commands pivot thrust
+  when it wants rotation).
+ */
+void SimRover::update_vectored_boat(const struct sitl_input &input, float delta_time)
+{
+    // added mass (kg) - virtual mass of entrained water
+    constexpr float ADDED_MASS_X = 50.0f;
+    constexpr float ADDED_MASS_Y = 150.0f;
+
+    const float steering = input.servos[0] ? normalise_servo_input(input.servos[0]) : 0;
+    const float throttle = input.servos[2] ? normalise_servo_input(input.servos[2]) : 0;
+
+    // thrust vector in body frame
+    const float angle_rad = radians(steering * vectored_angle_max);
+    const float thrust = throttle * boat_thrust_max;
+    const float fx = cosf(angle_rad) * thrust;
+    const float fy = sinf(angle_rad) * thrust;
+
+    // body-frame velocity from earth-frame state (single source of truth)
+    const Vector3f vel_body = dcm.transposed() * velocity_ef;
+    const float u = vel_body.x;
+    const float v = vel_body.y;
+    const float r = boat_r;
+
+    // surge: thrust - linear/quadratic drag + coriolis
+    const float du = (fx - boat_xu*u - boat_xuu*fabsf(u)*u + boat_mass*r*v) / (boat_mass + ADDED_MASS_X);
+    // sway: lateral thrust - drag - coriolis
+    const float dv = (fy - boat_yv*v - boat_yvv*fabsf(v)*v - boat_mass*r*u) / (boat_mass + ADDED_MASS_Y);
+    // yaw: moment from lateral thrust at stern arm - damping
+    const float dr = (boat_thrust_arm*fy - boat_nr*r - boat_nrr*fabsf(r)*r) / boat_iz;
+
+    boat_r += dr * delta_time;
+    // physical yaw-rate limit of the hull; stays well under MAX_YAW_RATE
+    // (360 deg/s) which is the EKF sanity bound enforced elsewhere
+    boat_r = constrain_float(boat_r, -radians(vectored_turn_rate_max), radians(vectored_turn_rate_max));
+
+    gyro = Vector3f(0, 0, boat_r);
+
+    // update attitude
+    dcm.rotate(gyro * delta_time);
+    dcm.normalize();
+
+    // kinematic body accel: du - r*v, dv + r*u (coriolis removed so
+    // that update()'s earth-frame integration sees true acceleration)
+    accel_body = Vector3f(du - r*v, dv + r*u, 0);
 }
 
 /*

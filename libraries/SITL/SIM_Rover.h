@@ -44,24 +44,37 @@ private:
     float max_wheel_turn = 35.0f;       // ackermann steering vehicle's maximum steering angle
     float turning_circle = 1.8f;        // ackermann steering vehicle's minimum turn diameter in meters
     float skid_turn_rate = 140.0f;      // skid-steering vehicle's maximum turn rate in deg/sec
-    bool skid_steering;                 // true if this vehicle is a skid-steering vehicle
+     bool skid_steering = false;             // true if this vehicle is a skid-steering vehicle
 
     // vectored thrust related members
-    // vectored thrust related members
-    bool vectored_thrust;                   // true if vehicle uses vectored thrust (i.e. steering controls direction of thrust)
+    bool vectored_thrust = false;           // true if vehicle uses vectored thrust (i.e. steering controls direction of thrust)
     float vectored_angle_max = 90.0f;       // maximum angle (in degrees) to which thrust can be turned
     float vectored_turn_rate_max = 90.0f;   // maximum turn rate (in deg/sec) with full throttle angled at 90deg
-    float vectored_yaw_rate = 0.0f;         // lagged yaw rate state (deg/s) - models hull rotational inertia
-    float vectored_yaw_tc = 1.5f;           // yaw rate first-order lag time constant (s) - heavy boat responds slowly
+
+    // vectored boat hydrodynamic state (3-DOF Fossen lumped model)
+    // u/v are derived from velocity_ef each tick; only yaw rate is
+    // integrated internally because Aircraft has no angular-rate state
+    float boat_r = 0.0f;                    // yaw rate (rad/s)
+    float boat_mass = 250.0f;               // kg
+    float boat_iz = 400.0f;                 // yaw inertia (kg.m^2)
+    float boat_thrust_max = 150.0f;         // N at full throttle
+    float boat_thrust_arm = 1.5f;           // m, thruster distance aft of CG
+    float boat_xu = 20.0f;                  // linear surge drag (N/(m/s))
+    float boat_xuu = 40.0f;                 // quadratic surge drag (N/(m/s)^2)
+    float boat_yv = 150.0f;                 // linear sway drag
+    float boat_yvv = 300.0f;                // quadratic sway drag
+    float boat_nr = 50.0f;                  // linear yaw damping (N.m/(rad/s))
+    float boat_nrr = 200.0f;                // quadratic yaw damping
 
     // omni3 Mecanum related members
-    bool omni3;                             // true if vehicle is omni-directional with 3 Mecanum wheels
+    bool omni3 = false;                         // true if vehicle is omni-directional with 3 Mecanum wheels
     float omni3_max_speed = 2.3625f;        // omni vehicle's maximum forward speed in m/s
     float omni3_max_accel = 1.0f;           // omni vehicle's maximum forward acceleration in m/s/s
     float omni3_wheel_max_ang_vel = 50.0f;  // omni vehicle's wheel maximum angular velocity in rad/s
 
     void update_ackermann_or_skid(const struct sitl_input &input, float delta_time);
     void update_omni3(const struct sitl_input &input, float delta_time);
+    void update_vectored_boat(const struct sitl_input &input, float delta_time);
 
     float turn_circle(float steering) const;
     float calc_yaw_rate(float steering, float speed);
