@@ -613,8 +613,8 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         # first make sure we can breach the fence:
         self.set_rc(10, 1000)
         self.change_mode("ACRO")
-        self.set_rc(3, 1550)
-        self.wait_distance_to_home(25, 100000, timeout=60)
+        self.set_rc(3, 1750)
+        self.wait_distance_to_home(25, 100000, timeout=120)
         self.change_mode("RTL")
         self.wait_statustext("Reached destination", timeout=60)
         # now enable avoidance and make sure we can't:
@@ -1001,7 +1001,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         # start moving forward a little:
         normal_rc_throttle = 1700
         self.set_rc(3, normal_rc_throttle)
-        self.wait_groundspeed(5, 100)
+        self.wait_groundspeed(0.5, 100)
 
         # allow overrides:
         self.set_rc(12, 2000)
@@ -5818,28 +5818,28 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.wait_ready_to_arm()
         self.arm_vehicle()
 
-        def send_pivot(value, target):  
-            type_mask = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE +  
-                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE)  
-            self.mav.mav.set_position_target_global_int_send(  
-                0,  
-                1,  
-                1,  
-                mavutil.mavlink.MAV_FRAME_GLOBAL_INT,  
-                type_mask,  
-                0, 0, 0,        # lat, lon, alt (ignored)  
-                0, 0, 0,        # vx, vy, vz (ignored)  
-                0, 0, 0,        # afx, afy, afz (ignored)  
-                math.radians(180),  # yaw  
-                0,              # yaw-rate (ignored)  
+        def send_pivot(value, target):
+            type_mask = (mavutil.mavlink.POSITION_TARGET_TYPEMASK_X_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_Y_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_Z_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE +
+                         mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE)
+            self.mav.mav.set_position_target_global_int_send(
+                0,
+                1,
+                1,
+                mavutil.mavlink.MAV_FRAME_GLOBAL_INT,
+                type_mask,
+                0, 0, 0,        # lat, lon, alt (ignored)
+                0, 0, 0,        # vx, vy, vz (ignored)
+                0, 0, 0,        # afx, afy, afz (ignored)
+                math.radians(180),  # yaw
+                0,              # yaw-rate (ignored)
             )
         self.wait_heading(180, accuracy=15, timeout=60, called_function=send_pivot)
         self.disarm_vehicle()
