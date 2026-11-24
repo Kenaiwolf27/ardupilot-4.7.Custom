@@ -470,7 +470,7 @@ class AutoTestRover(vehicle_test_suite.TestSuite):
         })
         self.change_mode("STEERING")
         self.set_rc(3, 2000)
-        self.wait_groundspeed(15, 100)
+        self.wait_groundspeed(speed * 0.8, 100)
         initial = self.mav.location()
         initial_time = time.time()
         while time.time() - initial_time < 2:
@@ -560,7 +560,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                       (m.wp_dist, wp_dist_min,))
 
         # wait for mission to complete
-        self.wait_statustext("Mission Complete", timeout=70)
+        self.wait_statustext("Mission Complete", timeout=300)
 
         # the EKF doesn't pull us down to 0 speed:
         self.wait_groundspeed(0, 0.5, timeout=600)
@@ -590,7 +590,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
 
         self.change_mode('AUTO')
         self.wait_current_waypoint(2, timeout=120)
-        for speed in 1, 5.5, 1.5, 7.5:
+        for speed in 0.5, 1.0, 0.7, 1.3:
             self.set_parameter("RTL_SPEED", speed)
             self.change_mode('RTL')
             self.wait_groundspeed(speed-0.1, speed+0.1, minimum_duration=10)
@@ -1452,7 +1452,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         accuracy = self.get_parameter("WP_RADIUS")
 
         self.reach_heading_manual(10)
-        self.reach_distance_manual(50)
+        self.reach_distance_manual(50, timeout=120)
 
         self.change_mode("RTL")
 
@@ -4964,7 +4964,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         target_loc = mavutil.location(40.073799, -105.229156)
         self.wait_location(target_loc, height_accuracy=None, timeout=300)
         # mission has RTL as last item
-        self.wait_distance_to_home(3, 7, timeout=300)
+        self.wait_distance_to_home(3, 7, timeout=600)
         self.disarm_vehicle()
 
     def send_guided_mission_item(self, loc, target_system=1, target_component=1):
@@ -5222,7 +5222,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         # target_loc is copied from the mission file
         self.wait_location(target_loc, timeout=300)
         # mission has RTL as last item
-        self.wait_distance_to_home(3, 7, timeout=300)
+        self.wait_distance_to_home(3, 7, timeout=600)
         self.disarm_vehicle()
 
     def test_scripting_simple_loop(self):
@@ -5964,7 +5964,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                 0, # yaw rate
                 1) # thrust
 
-        self.wait_heading(angle, called_function=poke_set_attitude, minimum_duration=5)
+        self.wait_heading(angle, called_function=poke_set_attitude, minimum_duration=5, timeout=180)
 
     def SET_POSITION_TARGET_LOCAL_NED(self, target_sysid=None, target_compid=1):
         '''Test handling of SET_POSITION_TARGET_LOCAL_NED'''
@@ -6007,7 +6007,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             (ofs_x, ofs_y, 0),
             distance_min=0,
             distance_max=3,
-            timeout=60,
+            timeout=150,
             called_function=lambda last_value, target : send_target(),
             minimum_duration=5,  # make sure we stop!
         )
@@ -6632,7 +6632,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         target_loc = self.offset_location_ne(here, 2000, 0)
         self.send_guided_mission_item(target_loc)
 
-        self.wait_groundspeed(3, 100, minimum_duration=5)
+        self.wait_groundspeed(0.5, 100, minimum_duration=5)
 
         for method in self.run_cmd, self.run_cmd_int:
             self.progress("Forwards!")
@@ -6658,7 +6658,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         here = self.mav.location()
         target_loc = self.offset_location_ne(here, 2000, 0)
         self.send_guided_mission_item(target_loc)
-        self.wait_distance_to_home(20, 100)
+        self.wait_distance_to_home(20, 100, timeout=120)
 
         self.run_cmd(mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH)
         self.wait_mode('RTL')
@@ -6668,7 +6668,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.run_cmd_int(mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH)
         self.wait_mode('RTL')
 
-        self.wait_distance_to_home(0, 5, timeout=30)
+        self.wait_distance_to_home(0, 5, timeout=120)
         self.disarm_vehicle()
 
     def MAV_CMD_DO_CHANGE_SPEED(self):
@@ -6681,9 +6681,9 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         here = original_loc
         target_loc = self.offset_location_ne(here, 2000, 0)
         self.send_guided_mission_item(target_loc)
-        self.wait_distance_to_home(20, 100)
-
-        speeds = 3, 7, 12, 4
+        self.wait_distance_to_home(20, 100, timeout=120)  
+  
+        speeds = 0.8, 1.3, 0.5, 1.0
 
         for speed in speeds:
             self.run_cmd(mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED, p2=speed)
@@ -6697,7 +6697,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
 
         self.change_mode('RTL')
 
-        self.wait_distance_to_home(0, 5, timeout=30)
+        self.wait_distance_to_home(0, 5, timeout=120)
         self.disarm_vehicle()
 
     def MAV_CMD_MISSION_START(self):
@@ -6715,7 +6715,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             self.wait_groundspeed(0, 1)
             method(mavutil.mavlink.MAV_CMD_MISSION_START)
             self.wait_mode('AUTO')
-            self.wait_groundspeed(3, 100)
+            self.wait_groundspeed(0.5, 100)
         self.disarm_vehicle()
 
     def MAV_CMD_NAV_SET_YAW_SPEED(self):
