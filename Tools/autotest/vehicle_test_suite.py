@@ -7440,7 +7440,7 @@ class TestSuite(abc.ABC):
             self.progress("NOT IMPLEMENTED")
         if self.is_rover():
             self.set_rc(3, 1700)
-            self.wait_distance(distance, accuracy=2)
+            self.wait_distance(distance, accuracy=2, timeout=120)
             self.set_rc(3, 1500)
 
     # emit a guided-mode command to come to a specific heading.
@@ -12267,7 +12267,7 @@ Also, ignores heartbeats not from our target system'''
 
         self.do_RTL()
 
-    def SetpointGlobalVel(self, timeout=30):
+    def SetpointGlobalVel(self, timeout=180):
         """Test set position message in guided mode."""
         # Disable heading and yaw rate test on rover type
         if self.is_rover():

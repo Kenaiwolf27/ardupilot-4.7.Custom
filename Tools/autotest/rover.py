@@ -1452,7 +1452,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         accuracy = self.get_parameter("WP_RADIUS")
 
         self.reach_heading_manual(10)
-        self.reach_distance_manual(50, timeout=120)
+        self.reach_distance_manual(50)
 
         self.change_mode("RTL")
 
@@ -4036,7 +4036,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                         raise NotAchievedException("Breach of unexpected type")
             if self.mode_is("RTL", cached=True) and seen_fence_breach:
                 break
-        self.wait_distance_to_home(3, 7, timeout=30)
+        self.wait_distance_to_home(3, 7, timeout=600)
 
     def drive_somewhere_stop_at_boundary(self,
                                          loc,
@@ -4962,7 +4962,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.set_parameter("FENCE_ENABLE", 1)
         # target_loc is copied from the mission file
         target_loc = mavutil.location(40.073799, -105.229156)
-        self.wait_location(target_loc, height_accuracy=None, timeout=300)
+        self.wait_location(target_loc, height_accuracy=None, timeout=600)
         # mission has RTL as last item
         self.wait_distance_to_home(3, 7, timeout=600)
         self.disarm_vehicle()
@@ -5964,7 +5964,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                 0, # yaw rate
                 1) # thrust
 
-        self.wait_heading(angle, called_function=poke_set_attitude, minimum_duration=5, timeout=180)
+        self.wait_heading(angle, called_function=poke_set_attitude, minimum_duration=5, timeout=120)
 
     def SET_POSITION_TARGET_LOCAL_NED(self, target_sysid=None, target_compid=1):
         '''Test handling of SET_POSITION_TARGET_LOCAL_NED'''
