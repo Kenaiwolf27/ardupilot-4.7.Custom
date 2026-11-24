@@ -559,6 +559,11 @@ float Mode::calc_speed_nudge(float target_speed, bool reversed)
 // retrieve a current/wind drift estimate rotated into body frame (x=forward, y=right), m/s
 bool Mode::get_drift_compensation_body(Vector2f &drift_body) const
 {
+    // loiter upwind-edge suppression: report "no compensation" so calc_throttle
+    // adds no FF and the loiter samplers reconstruct ff_frac=0 / subtract nothing
+    if (_drift_ff_suppressed) {
+        return false;
+    }
     if (g2.sailboat.sail_enabled()) {
         return false;
     }

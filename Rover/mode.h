@@ -185,9 +185,15 @@ protected:
     // on things like proximity to corners and current speed
     virtual void calc_throttle(float target_speed, bool avoidance_enabled);
 
-	// drift COMPENSATION vector (-drift) in body frame: x>0 = forward thrust
-    // needed to cancel drift. returns false if no valid estimate
-    bool get_drift_compensation_body(Vector2f &drift_body) const;
+	// drift COMPENSATION vector (-drift) in body frame: x>0 = forward thrust  
+    // needed to cancel drift. returns false if no valid estimate  
+    bool get_drift_compensation_body(Vector2f &drift_body) const;  
+  
+    // loiter upwind-edge FF suppression: when set (by ModeLoiter::update),  
+    // get_drift_compensation_body() reports no compensation so calc_throttle  
+    // adds no FF AND the loiter samplers see ff_frac=0 / no coast subtraction.  
+    // single gate point keeps all three consumers consistent  
+    void set_drift_ff_suppressed(bool suppressed) { _drift_ff_suppressed = suppressed; }
 
     // apply drift compensation to a desired heading (centi-degrees) and speed (m/s).
     // desired_heading_cd/desired_speed are updated in place.  no-op if no drift estimate available.
@@ -274,9 +280,14 @@ protected:
     // true-coast detection (get_throttle() reads post-floor output)
     float _throttle_nav_pct = 0.0f;
 
-    // true while the steering-to-throttle floor is actually injecting thrust.
-    // drift samplers must not treat floor-thrust as "coasting"
-    bool _steer_floor_active = false;
+    // true while the steering-to-throttle floor is actually injecting thrust.  
+    // drift samplers must not treat floor-thrust as "coasting"  
+    bool _steer_floor_active = false;  
+  
+    // true while ModeLoiter suppresses drift-FF near the upwind circle edge.  
+    // read by get_drift_compensation_body(); stays false in every mode that  
+    // never sets it  
+    bool _drift_ff_suppressed = false;
 
     // steering-floor and loiter-drift tunables live in AP_MotorsUGV as MOT_SFL_* /
     // MOT_LOIT_* GCS parameters - access via g2.motors.get_*() at the call site
@@ -751,12 +762,24 @@ protected:
     uint8_t _drift_rising_count;    // number of consecutive ticks distance-to-destination has been rising while coasting
     uint8_t _drift_zero_count = 0;  // consecutive equilibrium-window ticks with |I| below LOIT_I_MIN (pending zero-drift sample)
 
-    // hysteresis band on the loiter-radius boundary so heading logic does not
-    // flap between "aim at center" and "aim into drift" while oscillating
-    static constexpr float LOITER_RADIUS_HYST = 0.10f;   // 10% of loiter_radius
-
-    // sticky inside-circle state for the radius hysteresis
-    bool _inside_loiter_circle = false;
+    // hysteresis band on the loiter-radius boundary so heading logic does not  
+    // flap between "aim at center" and "aim into drift" while oscillating  
+    static constexpr float LOITER_RADIUS_HYST = 0.10f;   // 10% of loiter_radius  
+  
+    // sticky inside-circle state for the radius hysteresis  
+    bool _inside_loiter_circle = false;  
+  
+    // upwind-edge FF gate: once the boat is pushed past this fraction of the  
+    // loiter radius on the upwind side (FF pointing OUT of the circle), hard-  
+    // suppress the drift FF until the distance starts shrinking again. prevents  
+    // a stale/phantom estimate from pushing the boat out through the upwind  
+    // boundary - the boat must never reverse to recover from that  
+    static constexpr float   LOITER_FF_GATE_RADIUS_FRAC = 0.75f;  // fraction of loiter_radius  
+    static constexpr float   LOITER_FF_GATE_HYST        = 0.05f;  // release hysteresis (fraction of radius)  
+    static constexpr uint8_t LOITER_FF_FALLING_TICKS    = 3;      // consecutive falling-distance ticks to release  
+  
+    bool    _drift_ff_gate_active = false;  // sticky gate state  
+    uint8_t _drift_falling_count = 0;       // consecutive ticks distance-to-destination falling  
 };
 
 class ModeManual : public Mode

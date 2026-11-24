@@ -24,6 +24,9 @@ bool ModeLoiter::_enter()
     _drift_zero_count = 0;
     _drift_i_filt_valid = false;
     _inside_loiter_circle = false;
+    _drift_ff_gate_active = false;
+    _drift_falling_count = 0;
+    set_drift_ff_suppressed(false);
 
     // handoff: seed loiter estimate from the nav-source value, weighted by age.
     // mirrors Mode::enter() - seeded sources accepted (timestamp preserved,
@@ -104,7 +107,44 @@ void ModeLoiter::update()
         } else {
             _drift_rising_count = 0;
         }
+        if (_distance_to_destination < _drift_last_distance) {
+            _drift_falling_count++;
+        } else {
+            _drift_falling_count = 0;
+        }
         _drift_last_distance = _distance_to_destination;
+
+        // upwind-edge FF gate: if the boat sits past 0.75R on the side the
+        // drift comes FROM, the -drift FF points OUT of the circle and would
+        // push the boat through the upwind boundary - suppress it hard. a real
+        // drift then carries the boat back toward center for free; a phantom
+        // estimate (wind died) can no longer push it out. release when the
+        // distance is falling (drift is carrying it home), it dropped back
+        // below the gated radius with hysteresis, or the estimate is gone
+        {
+            Vector2f drift_ne;
+            const bool have_drift = g2.motors.get_current_estimate_ne(drift_ne) &&
+                                    drift_ne.length() > g2.motors.get_loit_drift_min_mps();
+            if (!_drift_ff_gate_active && have_drift &&
+                _distance_to_destination > LOITER_FF_GATE_RADIUS_FRAC * loiter_radius) {
+                // get_distance_NE returns the vector TO the argument, i.e.
+                // boat -> center. boat upwind of center = displaced opposite
+                // the drift direction, so boat->center points ALONG drift_ne
+                // -> dot > 0. that is exactly the state where -drift (the FF
+                // direction) points OUT of the circle
+                const Vector2f to_center_ne = rover.current_loc.get_distance_NE(_destination);
+                if ((to_center_ne * drift_ne) > 0.0f) {
+                    _drift_ff_gate_active = true;
+                }
+            }
+            if (_drift_ff_gate_active &&
+                (_drift_falling_count >= LOITER_FF_FALLING_TICKS ||
+                 _distance_to_destination < (LOITER_FF_GATE_RADIUS_FRAC - LOITER_FF_GATE_HYST) * loiter_radius ||
+                 !have_drift)) {
+                _drift_ff_gate_active = false;
+            }
+            set_drift_ff_suppressed(_drift_ff_gate_active);
+        }
 
         const float yaw_rate_degs = fabsf(degrees(ahrs.get_yaw_rate_earth()));
         // rotation gate on yaw rate only: thruster deflection alone does not
@@ -185,7 +225,25 @@ void ModeLoiter::update()
                                         (stationary || sliding);
         const bool pid_at_equilibrium = pid_in_equilibrium_window &&
                                         fabsf(tinfo.I) >= g2.motors.get_loit_i_min();
-        if (pid_at_equilibrium) {
+        // phantom-FF detector: negative I inside the equilibrium window means
+        // the PID is braking AGAINST our own feed-forward push - the applied
+        // FF exceeds the real drift (or the drift is gone entirely). fabsf()
+        // below would read this as drift in the opposite direction and could
+        // flip the estimate 180deg instead of clearing it. decay hard and skip
+        // the sample this tick
+        const bool phantom_ff = pid_in_equilibrium_window &&
+                                (tinfo.I < -g2.motors.get_loit_i_min());
+        if (phantom_ff) {
+            Vector2f prev_ne;
+            uint32_t age_ms;
+            bool seeded;
+            if (g2.motors.get_loiter_estimate_ne(prev_ne, age_ms, seeded) &&
+                !seeded && !prev_ne.is_zero()) {
+                g2.motors.decay_loiter_estimate(0.5f);
+            }
+            _drift_i_filt_valid = false;
+            _drift_zero_count = 0;
+        } else if (pid_at_equilibrium) {
             _drift_zero_count = 0;  // nonzero-I path - cancel pending zero window
             const float i_mag = fabsf(tinfo.I);
             if (!_drift_i_filt_valid) {
@@ -352,6 +410,9 @@ void ModeLoiter::update()
     } else {
         _drift_rising_count = 0;
         _drift_zero_count = 0;
+        _drift_falling_count = 0;
+        _drift_ff_gate_active = false;
+        set_drift_ff_suppressed(false);
         // P controller with hard-coded gain to convert distance to desired speed
         _desired_speed = MIN((_distance_to_destination - loiter_radius) * g2.loiter_speed_gain, g2.wp_nav.get_default_speed());
 
