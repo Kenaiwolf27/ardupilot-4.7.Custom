@@ -1234,7 +1234,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.progress("start moving forward a little")
         normal_rc_throttle = 1700
         self.set_rc(3, normal_rc_throttle)
-        self.wait_groundspeed(5, 100)
+        self.wait_groundspeed(0.5, 100)
 
         self.progress("allow overrides")
         self.set_rc(12, 2000)
