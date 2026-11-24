@@ -122,18 +122,18 @@ void ModeLoiter::update()
         // distance is falling (drift is carrying it home), it dropped back
         // below the gated radius with hysteresis, or the estimate is gone
         {
-            Vector2f drift_ne;
-            const bool have_drift = g2.motors.get_current_estimate_ne(drift_ne) &&
-                                    drift_ne.length() > g2.motors.get_loit_drift_min_mps();
+            Vector2f gate_drift_ne;
+            const bool have_drift = g2.motors.get_current_estimate_ne(gate_drift_ne) &&
+                                    gate_drift_ne.length() > g2.motors.get_loit_drift_min_mps();
             if (!_drift_ff_gate_active && have_drift &&
                 _distance_to_destination > LOITER_FF_GATE_RADIUS_FRAC * loiter_radius) {
                 // get_distance_NE returns the vector TO the argument, i.e.
                 // boat -> center. boat upwind of center = displaced opposite
-                // the drift direction, so boat->center points ALONG drift_ne
-                // -> dot > 0. that is exactly the state where -drift (the FF
-                // direction) points OUT of the circle
+                // the drift direction, so boat->center points ALONG the drift
+                // vector -> dot > 0. that is exactly the state where -drift
+                // (the FF direction) points OUT of the circle
                 const Vector2f to_center_ne = rover.current_loc.get_distance_NE(_destination);
-                if ((to_center_ne * drift_ne) > 0.0f) {
+                if ((to_center_ne * gate_drift_ne) > 0.0f) {
                     _drift_ff_gate_active = true;
                 }
             }
