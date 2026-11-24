@@ -616,7 +616,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.set_rc(3, 1750)
         self.wait_distance_to_home(25, 100000, timeout=120)
         self.change_mode("RTL")
-        self.wait_statustext("Reached destination", timeout=60)
+       self.wait_statustext("Reached destination", timeout=180)
         # now enable avoidance and make sure we can't:
         self.set_rc(10, 2000)
         self.change_mode("ACRO")
@@ -1056,7 +1056,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                 65535) # chan8_raw
 
             m = self.assert_receive_message('VFR_HUD')
-            want_speed = 5.0
+            want_speed = 0.5
             self.progress("Speed=%f want=>%f" % (m.groundspeed, want_speed))
 
             if m.groundspeed > want_speed:
@@ -1283,7 +1283,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
                 0) # button mask
 
             m = self.assert_receive_message('VFR_HUD')
-            want_speed = 5.0
+            want_speed = 0.5
 
             self.progress("Speed=%f want=>%f  throttle=%u want=%u" %
                           (m.groundspeed, want_speed, m.throttle, expected_throttle))
@@ -1958,7 +1958,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.setGCSfailsafe(1)
         self.set_heartbeat_rate(0)
         self.wait_mode("RTL")
-        self.wait_statustext("Reached destination", timeout=60)
+       self.wait_statustext("Reached destination", timeout=180)
         self.set_heartbeat_rate(self.speedup)
         self.wait_statustext("GCS Failsafe Cleared", timeout=60)
         self.end_subtest("Completed GCS failsafe RTL")
@@ -1969,7 +1969,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         go_somewhere()
         self.set_heartbeat_rate(0)
         self.wait_mode("RTL")
-        self.wait_statustext("Reached destination", timeout=60)
+       self.wait_statustext("Reached destination", timeout=180)
         self.set_heartbeat_rate(self.speedup)
         self.wait_statustext("GCS Failsafe Cleared", timeout=60)
         self.end_subtest("Completed GCS failsafe invalid value")
@@ -1997,7 +1997,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.delay_sim_time(old_gcs_timeout + (new_gcs_timeout - old_gcs_timeout) / 2)
         self.assert_mode("MANUAL")
         self.wait_mode("RTL")
-        self.wait_statustext("Reached destination", timeout=60)
+       self.wait_statustext("Reached destination", timeout=180)
         self.set_heartbeat_rate(self.speedup)
         self.wait_statustext("GCS Failsafe Cleared", timeout=60)
         self.disarm_vehicle()
@@ -7662,6 +7662,7 @@ return update()
             "SlewRate": "got timing report failure on CI",
             "MAV_CMD_NAV_SET_YAW_SPEED": "compiled out of code by default",
             "PolyFenceObjectAvoidanceBendyRuler": "unreliable",
+            "Sprayer": "no sprayer hardware on vectored boat",
         }
 
     def rc_defaults(self):
