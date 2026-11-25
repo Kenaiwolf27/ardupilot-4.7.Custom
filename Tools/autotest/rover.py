@@ -6370,6 +6370,8 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             "RNGFND6_ADDR" : 113,    # 0x71 address from SIM_I2C.cpp
             "RNGFND6_ORIENT" : 25,   # Set to downward facing
             "RNGFND6_TYPE" : 2,      # MaxbotixI2C
+
+            "FRAME_CLASS": 1,        # start as non-boat so WATER_DEPTH is not sent
         })
 
         self.reboot_sitl()
@@ -6502,7 +6504,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             self.wait_ready_to_arm()
             self.arm_vehicle()
             initial_position = self.offset_location_ne(target, -20, -2)
-            self.drive_to_location(initial_position)
+            self.drive_to_location(initial_position, timeout=180)
             self.change_mode(8) # DOCK mode
             max_delta = 1
             self.wait_distance_to_location(target, 0, max_delta, timeout=180)
