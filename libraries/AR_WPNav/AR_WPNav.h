@@ -30,7 +30,7 @@ public:
 
     // execute the mission in reverse (i.e. drive backwards to destination)
     bool get_reversed() const { return _reversed; }
-    void set_reversed(bool reversed) { _reversed = reversed; }
+    void set_reversed(bool reversed);
 
     // get navigation outputs for speed (in m/s) and turn rate (in rad/sec)
     float get_speed() const { return _desired_speed_limited; }

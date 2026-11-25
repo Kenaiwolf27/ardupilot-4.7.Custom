@@ -368,6 +368,22 @@ bool AR_WPNav::set_desired_location_expect_fast_update(const Location &destinati
     return true;
 }
 
+// set reversed flag and re-check pivot activation so that a mid-journey
+// reversal (e.g. MAV_CMD_DO_SET_REVERSE) triggers a pivot turn towards the
+// reversed bearing instead of silently continuing with the old heading
+void AR_WPNav::set_reversed(bool reversed)
+{
+    if (_reversed == reversed) {
+        return;
+    }
+    _reversed = reversed;
+    if (_orig_and_dest_valid && is_active()) {
+        update_distance_and_bearing_to_destination();
+        _pivot.deactivate();
+        _pivot.check_activation((_reversed ? wrap_360_cd(oa_wp_bearing_cd() + 18000) : oa_wp_bearing_cd()) * 0.01);
+    }
+}
+
 // calculate vehicle stopping point using current location, velocity and maximum acceleration
 bool AR_WPNav::get_stopping_location(Location& stopping_loc)
 {
