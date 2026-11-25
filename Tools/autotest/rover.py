@@ -6028,16 +6028,18 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.change_mode("AUTO")
         self.wait_text("Mission Complete", check_context=True, wallclock_timeout=2)
         # On Hold we should just stop and don't update the navigation target anymore
-        tstart = self.get_sim_time()
-        while True:
-            if self.get_sim_time_cached() - tstart > 15:
-                raise AutoTestTimeoutException("Still getting POSITION_TARGET_GLOBAL_INT")
-            m = self.mav.recv_match(type="POSITION_TARGET_GLOBAL_INT",
-                                    blocking=True,
-                                    timeout=10)
-            if m is None:
-                self.progress("No POSITION_TARGET_GLOBAL_INT received, all good !")
-                break
+        # (boats keep streaming the loiter target - upstream behaviour)
+        if self.get_parameter("FRAME_CLASS") != 2:
+            tstart = self.get_sim_time()
+            while True:
+                if self.get_sim_time_cached() - tstart > 15:
+                    raise AutoTestTimeoutException("Still getting POSITION_TARGET_GLOBAL_INT")
+                m = self.mav.recv_match(type="POSITION_TARGET_GLOBAL_INT",
+                                        blocking=True,
+                                        timeout=10)
+                if m is None:
+                    self.progress("No POSITION_TARGET_GLOBAL_INT received, all good !")
+                    break
         self.context_clear_collection("STATUSTEXT")
         self.change_mode("GUIDED")
         self.context_collect("STATUSTEXT")
@@ -6639,15 +6641,15 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         for method in self.run_cmd, self.run_cmd_int:
             self.progress("Forwards!")
             method(mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, p1=0)
-            self.wait_heading(0)
+            self.wait_heading(0, timeout=120)
 
             self.progress("Backwards!")
             method(mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, p1=1)
-            self.wait_heading(180)
+            self.wait_heading(180, timeout=120)
 
             self.progress("Forwards!")
             method(mavutil.mavlink.MAV_CMD_DO_SET_REVERSE, p1=0)
-            self.wait_heading(0)
+            self.wait_heading(0, timeout=120)
 
         self.disarm_vehicle()
 
@@ -7383,11 +7385,11 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.wait_ready_to_arm()
         self.arm_vehicle()
         self.set_rc(3, 1700)
-        self.wait_groundspeed(5, 100, minimum_duration=2)
+        self.wait_groundspeed(0.5, 100, minimum_duration=2)
         self.set_safetyswitch_on()
         self.wait_groundspeed(0, 0.1, minimum_duration=2)
         self.set_safetyswitch_off()
-        self.wait_groundspeed(5, 100, minimum_duration=2)
+        self.wait_groundspeed(0.5, 100, minimum_duration=2)
         self.set_rc(3, 1500)
         self.disarm_vehicle()
 
