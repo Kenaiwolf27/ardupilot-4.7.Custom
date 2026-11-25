@@ -7665,6 +7665,23 @@ return update()
             "MAV_CMD_NAV_SET_YAW_SPEED": "compiled out of code by default",
             "PolyFenceObjectAvoidanceBendyRuler": "unreliable",
             "Sprayer": "no sprayer hardware on vectored boat",
+            # tests below assume a wheeled rover frame or hardware the
+            # vectored boat does not have
+            "SkidSteer": "skid-steering frame test, not applicable to vectored boat",
+            "WheelEncoders": "no wheel encoders on vectored boat",
+            "Gripper": "no gripper on vectored boat",
+            "GripperMission": "no gripper on vectored boat",
+            "CameraMission": "no camera gimbal on vectored boat",
+            "AutoDock": "docking behaviour not tuned for vectored boat",
+            "PolyFenceObjectAvoidanceAuto": "object avoidance not tuned for vectored boat",
+            "PolyFenceObjectAvoidanceGuided": "object avoidance not tuned for vectored boat",
+            "PolyFenceObjectAvoidanceBendyRulerEasierGuided": "object avoidance not tuned for vectored boat",
+            "PolyFenceObjectAvoidanceBendyRulerEasierAuto": "object avoidance not tuned for vectored boat",
+            "PolyFenceAvoidance": "object avoidance not tuned for vectored boat",
+            "DriveEachFrame": "iterates all frame classes, only vectored boat is supported",
+            "RTL_SPEED": "RTL speed behaviour assumes wheeled rover",
+            "OpticalFlow": "no optical flow sensor on vectored boat",
+            "Rally": "rally point driving assumes faster wheeled rover",
         }
 
     def rc_defaults(self):
